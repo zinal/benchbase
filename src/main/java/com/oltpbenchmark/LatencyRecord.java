@@ -45,6 +45,11 @@ public class LatencyRecord implements Iterable<LatencyRecord.Sample> {
 
   public void addLatency(
       int transType, long startNanosecond, long endNanosecond, int workerId, int phaseId) {
+    addLatency(transType, startNanosecond, endNanosecond, workerId, phaseId, true);
+  }
+
+  public void addLatency(int transType, long startNanosecond, long endNanosecond,
+          int workerId, int phaseId, boolean success) {
 
     if (nextIndex == ALLOC_SIZE) {
       allocateChunk();
@@ -56,7 +61,7 @@ public class LatencyRecord implements Iterable<LatencyRecord.Sample> {
     int latencyMicroseconds = (int) ((endNanosecond - startNanosecond + 500) / 1000);
 
     chunk[nextIndex] =
-        new Sample(transType, startOffsetNanosecond, latencyMicroseconds, workerId, phaseId);
+        new Sample(transType, startOffsetNanosecond, latencyMicroseconds, workerId, phaseId, success);
     ++nextIndex;
 
     lastNanosecond += startOffsetNanosecond;
@@ -84,6 +89,7 @@ public class LatencyRecord implements Iterable<LatencyRecord.Sample> {
     private final int latencyMicrosecond;
     private final int workerId;
     private final int phaseId;
+    private final boolean success;
 
     public Sample(
         int transactionType,
@@ -91,15 +97,30 @@ public class LatencyRecord implements Iterable<LatencyRecord.Sample> {
         int latencyMicrosecond,
         int workerId,
         int phaseId) {
+      this(transactionType, startNanosecond, latencyMicrosecond, workerId, phaseId, true);
+    }
+
+    public Sample(
+        int transactionType,
+        long startNanosecond,
+        int latencyMicrosecond,
+        int workerId,
+        int phaseId,
+        boolean success) {
       this.transactionType = transactionType;
       this.startNanosecond = startNanosecond;
       this.latencyMicrosecond = latencyMicrosecond;
       this.workerId = workerId;
       this.phaseId = phaseId;
+      this.success = success;
     }
 
     public int getTransactionType() {
       return transactionType;
+    }
+
+    public boolean isSuccess() {
+      return success;
     }
 
     public long getStartNanosecond() {
