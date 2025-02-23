@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.util.*;
 import java.util.Map.Entry;
+import java.util.concurrent.locks.ReentrantLock;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.json.JSONStringer;
@@ -48,6 +49,8 @@ public class Histogram<X extends Comparable<X>> implements JSONSerializable {
     NUM_SAMPLES,
     KEEP_ZERO_ENTRIES,
   }
+
+  private final ReentrantLock lock = new ReentrantLock();
 
   protected final TreeMap<X, Integer> histogram = new TreeMap<>();
   protected int num_samples = 0;
@@ -105,7 +108,8 @@ public class Histogram<X extends Comparable<X>> implements JSONSerializable {
   public void setKeepZeroEntries(boolean flag) {
     // When this option is disabled, we need to remove all of the zeroed entries
     if (!flag && this.keep_zero_entries) {
-      synchronized (this) {
+      try {
+        lock.lock();
         Iterator<X> it = this.histogram.keySet().iterator();
         int ctr = 0;
         while (it.hasNext()) {
@@ -119,6 +123,8 @@ public class Histogram<X extends Comparable<X>> implements JSONSerializable {
         if (ctr > 0) {
           LOG.debug("Removed {} zero entries from histogram", ctr);
         }
+      } finally {
+        lock.unlock();
       }
     }
     this.keep_zero_entries = flag;
@@ -161,7 +167,16 @@ public class Histogram<X extends Comparable<X>> implements JSONSerializable {
    * Recalculate the min/max count value sets Since this is expensive, this should only be done
    * whenever that information is needed
    */
-  private synchronized void calculateInternalValues() {
+  private void calculateInternalValues() {
+    try {
+      lock.lock();
+      doCalculateInternalValues();
+    } finally {
+      lock.unlock();
+    }
+  }
+
+  private void doCalculateInternalValues() {
     if (!this.dirty) {
       return;
     }

@@ -18,6 +18,7 @@
 package com.oltpbenchmark.distributions;
 
 import java.util.Random;
+import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -50,6 +51,8 @@ public final class ZipfianGenerator extends IntegerGenerator {
   public static final double ZIPFIAN_CONSTANT = 0.99;
 
   private static final Logger LOG = LoggerFactory.getLogger(ZipfianGenerator.class);
+
+  final ReentrantLock lock = new ReentrantLock();
 
   final Random rng;
 
@@ -241,7 +244,8 @@ public final class ZipfianGenerator extends IntegerGenerator {
     if (itemcount != countforzeta) {
 
       // have to recompute zetan and eta, since they depend on itemcount
-      synchronized (this) {
+      try {
+        lock.lock();
         if (itemcount > countforzeta) {
           // System.err.println("WARNING: Incrementally recomputing Zipfian distribtion.
           // (itemcount="+itemcount+" countforzeta="+countforzeta+")");
@@ -267,6 +271,8 @@ public final class ZipfianGenerator extends IntegerGenerator {
           zetan = zeta(itemcount, theta);
           eta = (1 - Math.pow(2.0 / items, 1 - theta)) / (1 - zeta2theta / zetan);
         }
+      } finally {
+        lock.unlock();
       }
     }
 
