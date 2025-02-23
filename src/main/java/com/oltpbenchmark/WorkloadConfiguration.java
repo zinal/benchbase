@@ -34,6 +34,7 @@ public class WorkloadConfiguration {
   private String username;
   private String password;
   private String driverClass;
+  private int maxConnections = 100;
   private int batchSize;
   private String sessionSetupFile;
   private int maxRetries;
@@ -41,7 +42,9 @@ public class WorkloadConfiguration {
   private double scaleFactor = 1.0;
   private double selectivity = -1.0;
   private int terminals;
-  private int loaderThreads = ThreadUtil.availableProcessors();
+  private int startFromId = 1;
+  private int loaderThreads = 2 * ThreadUtil.availableProcessors();
+  private int warmupTime = 0;
   private XMLConfiguration xmlConfig = null;
   private WorkloadState workloadState;
   private TransactionTypes transTypes = null;
@@ -55,6 +58,8 @@ public class WorkloadConfiguration {
    * connection per client session. This is useful to measure the connection overhead.
    */
   private boolean newConnectionPerTxn = false;
+
+  private boolean disableConnectionPooling = false;
 
   /**
    * If true, attempt to catch connection closed exceptions and reconnect. This allows the benchmark
@@ -113,6 +118,14 @@ public class WorkloadConfiguration {
 
   public void setDriverClass(String driverClass) {
     this.driverClass = driverClass;
+  }
+
+  public int getMaxConnections() {
+    return maxConnections;
+  }
+
+  public void setMaxConnections(int maxConnections) {
+    this.maxConnections = maxConnections;
   }
 
   public int getBatchSize() {
@@ -322,6 +335,30 @@ public class WorkloadConfiguration {
 
   public void setTerminals(int terminals) {
     this.terminals = terminals;
+  }
+
+  public int getStartFromId() {
+    return startFromId;
+  }
+
+  public void setStartFromId(int startFromId) {
+    this.startFromId = startFromId;
+  }
+
+  public int getWarmupTime() {
+    return warmupTime;
+  }
+
+  public void setWarmupTime(int warmupTime) {
+    this.warmupTime = warmupTime;
+  }
+
+  public boolean isDisableConnectionPooling() {
+    return disableConnectionPooling;
+  }
+
+  public void setDisableConnectionPooling(boolean disableConnectionPooling) {
+    this.disableConnectionPooling = disableConnectionPooling;
   }
 
   public TransactionTypes getTransTypes() {

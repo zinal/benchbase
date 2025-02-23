@@ -22,8 +22,6 @@ public class ThreadLocalRandomGenerator {
 
     /**
      * Constructor
-     *
-     * @param seed
      */
     public ThreadLocalRandomGenerator() {
     }
@@ -33,7 +31,7 @@ public class ThreadLocalRandomGenerator {
      *
      * @param minimum
      * @param maximum
-     * @returns a int in the range [minimum, maximum]. Note that this is inclusive.
+     * @return a int in the range [minimum, maximum]. Note that this is inclusive.
      */
     public int number(int minimum, int maximum) {
 
