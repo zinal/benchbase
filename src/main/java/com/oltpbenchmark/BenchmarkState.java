@@ -20,6 +20,7 @@ package com.oltpbenchmark;
 import com.oltpbenchmark.types.State;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,19 +28,22 @@ public final class BenchmarkState {
 
   private static final Logger LOG = LoggerFactory.getLogger(BenchmarkState.class);
 
+  private final WorkloadConfiguration workloadConf;
   private final long testStartNs;
   private final CountDownLatch startBarrier;
   private final AtomicInteger notDoneCount;
-  private volatile State state = State.WARMUP;
+  private final AtomicReference<State> state = new AtomicReference<>(State.WARMUP);
 
   /**
    * @param numThreads number of threads involved in the test: including the master thread.
+   * @param workloadConf workload configuration reference
    */
-  public BenchmarkState(int numThreads) {
-    startBarrier = new CountDownLatch(numThreads);
-    notDoneCount = new AtomicInteger(numThreads);
+  public BenchmarkState(int numThreads, WorkloadConfiguration workloadConf) {
+    this.workloadConf = workloadConf;
+    this.startBarrier = new CountDownLatch(numThreads);
+    this.notDoneCount = new AtomicInteger(numThreads);
 
-    testStartNs = System.nanoTime();
+    this.testStartNs = System.nanoTime();
   }
 
   // Protected by this
@@ -49,9 +53,7 @@ public final class BenchmarkState {
   }
 
   public State getState() {
-    synchronized (this) {
-      return state;
-    }
+    return state.get();
   }
 
   /** Wait for all threads to call this. Returns once all the threads have entered. */
@@ -66,33 +68,33 @@ public final class BenchmarkState {
   }
 
   public void startMeasure() {
-    state = State.MEASURE;
+    state.set(State.MEASURE);
   }
 
   public void startColdQuery() {
-    state = State.COLD_QUERY;
+    state.set(State.COLD_QUERY);
   }
 
   public void startHotQuery() {
-    state = State.MEASURE;
+    state.set(State.MEASURE);
   }
 
   public void signalLatencyComplete() {
-    state = State.LATENCY_COMPLETE;
+    state.set(State.LATENCY_COMPLETE);
   }
 
   public void ackLatencyComplete() {
-    state = State.MEASURE;
+    state.set(State.MEASURE);
   }
 
   public void signalError() {
     // A thread died, decrement the count and set error state
     notDoneCount.decrementAndGet();
-    state = State.ERROR;
+    state.set(State.ERROR);
   }
 
   public void startCoolDown() {
-    state = State.DONE;
+    state.set(State.DONE);
 
     // The master thread must also signal that it is done
     signalDone();
@@ -109,7 +111,7 @@ public final class BenchmarkState {
     if (current == 0) {
       // We are the last thread to notice that we are done: wake any
       // blocked workers
-      this.state = State.EXIT;
+      state.set(State.EXIT);
     }
     return current;
   }
