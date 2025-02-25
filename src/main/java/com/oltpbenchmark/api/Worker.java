@@ -46,7 +46,7 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
       LoggerFactory.getLogger("com.oltpbenchmark.api.ABORT_LOG");
 
   private WorkloadState workloadState;
-  private LatencyRecord latencies;
+  private ResultStats resultStats;
 
   // Interval requests used by the monitor
   private final AtomicInteger intervalRequests = new AtomicInteger(0);
@@ -75,6 +75,7 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
     this.configuration = this.benchmark.getWorkloadConfiguration();
     this.workloadState = this.configuration.getWorkloadState();
     this.transactionTypes = this.configuration.getTransTypes();
+    this.resultStats = new ResultStats(this.transactionTypes);
 
     if (!this.configuration.getNewConnectionPerTxn()) {
       try {
@@ -118,25 +119,20 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
     return (this.benchmark.rng());
   }
 
-  public final int getRequests() {
-    return latencies.size();
+  public ResultStats getStats() {
+    return resultStats;
+  }
+
+  public final long getRequests() {
+    return resultStats.count();
   }
 
   public final int getAndResetIntervalRequests() {
     return intervalRequests.getAndSet(0);
   }
 
-  public final Iterable<LatencyRecord.Sample> getLatencyRecords() {
-    return latencies;
-  }
-
   public final Procedure getProcedure(TransactionType type) {
     return (this.procedures.get(type));
-  }
-
-  @Deprecated
-  public final Procedure getProcedure(String name) {
-    return (this.name_procedures.get(name));
   }
 
   @SuppressWarnings("unchecked")
@@ -173,8 +169,7 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
     Thread t = Thread.currentThread();
     t.setName(this.toString());
 
-    // In case of reuse reset the measurements
-    latencies = new LatencyRecord(workloadState.getTestStartNs());
+    resultStats = new ResultStats(this.transactionTypes);
 
     // Invoke setup session
     try {
@@ -274,7 +269,7 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
 
         long start = System.nanoTime();
 
-        doWork(configuration.getDatabaseType(), transactionType);
+        TransactionStatus status = doWork(configuration.getDatabaseType(), transactionType);
 
         long end = System.nanoTime();
 
@@ -302,7 +297,9 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
               break;
             }
             if (preState == State.MEASURE && postPhase.getId() == prePhase.getId()) {
-              latencies.addLatency(transactionType.getId(), start, end, this.id, prePhase.getId());
+              boolean success =
+                  status == TransactionStatus.SUCCESS || status == TransactionStatus.USER_ABORTED;
+              resultStats.addLatency(transactionType.getId(), start, end, success);
               intervalRequests.incrementAndGet();
             }
             if (prePhase.isLatencyRun()) {
@@ -383,15 +380,16 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
    * @param databaseType TODO
    * @param transactionType TODO
    */
-  protected final void doWork(DatabaseType databaseType, TransactionType transactionType) {
+  protected final TransactionStatus doWork(
+      DatabaseType databaseType, TransactionType transactionType) {
+
+    TransactionStatus status = TransactionStatus.UNKNOWN;
 
     try {
       int retryCount = 0;
       int maxRetryCount = configuration.getMaxRetries();
 
       while (retryCount < maxRetryCount && this.workloadState.getGlobalState() != State.DONE) {
-
-        TransactionStatus status = TransactionStatus.UNKNOWN;
 
         if (this.conn == null) {
           try {
@@ -626,6 +624,8 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
 
       throw new RuntimeException(msg, ex);
     }
+
+    return status;
   }
 
   /**

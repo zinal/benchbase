@@ -17,12 +17,10 @@
 
 package com.oltpbenchmark;
 
-import com.oltpbenchmark.LatencyRecord.Sample;
 import com.oltpbenchmark.api.TransactionType;
 import com.oltpbenchmark.types.State;
 import com.oltpbenchmark.util.Histogram;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 public final class Results {
@@ -30,9 +28,8 @@ public final class Results {
   private final State state;
   private final long startTimestampMs;
   private final long nanoseconds;
-  private final int measuredRequests;
-  private final DistributionStatistics distributionStatistics;
-  private final List<LatencyRecord.Sample> latencySamples;
+  private final long measuredRequests;
+  private final ResultStats resultStats;
   private final Histogram<TransactionType> unknown = new Histogram<>(false);
   private final Histogram<TransactionType> success = new Histogram<>(true);
   private final Histogram<TransactionType> abort = new Histogram<>(false);
@@ -45,29 +42,17 @@ public final class Results {
       State state,
       long startTimestampMs,
       long elapsedNanoseconds,
-      int measuredRequests,
-      DistributionStatistics distributionStatistics,
-      final List<LatencyRecord.Sample> latencySamples) {
+      long measuredRequests,
+      ResultStats resultStats) {
     this.startTimestampMs = startTimestampMs;
     this.nanoseconds = elapsedNanoseconds;
     this.measuredRequests = measuredRequests;
-    this.distributionStatistics = distributionStatistics;
+    this.resultStats = resultStats;
     this.state = state;
-
-    if (distributionStatistics == null) {
-      this.latencySamples = null;
-    } else {
-      // defensive copy
-      this.latencySamples = List.copyOf(latencySamples);
-    }
   }
 
   public State getState() {
     return state;
-  }
-
-  public DistributionStatistics getDistributionStatistics() {
-    return distributionStatistics;
   }
 
   public Histogram<TransactionType> getSuccess() {
@@ -106,10 +91,6 @@ public final class Results {
     return (double) success.getSampleCount() / (double) nanoseconds * 1e9;
   }
 
-  public List<Sample> getLatencySamples() {
-    return latencySamples;
-  }
-
   public long getStartTimestampMs() {
     return startTimestampMs;
   }
@@ -118,8 +99,12 @@ public final class Results {
     return nanoseconds;
   }
 
-  public int getMeasuredRequests() {
+  public long getMeasuredRequests() {
     return measuredRequests;
+  }
+
+  public ResultStats getStats() {
+    return resultStats;
   }
 
   @Override
