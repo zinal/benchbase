@@ -21,6 +21,7 @@ import com.oltpbenchmark.util.StringUtil;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class Phase {
   public enum Arrival {
@@ -43,6 +44,7 @@ public class Phase {
   private final List<Double> weights;
   private final int weightCount;
   private final int activeTerminals;
+  private final ReentrantLock guard = new ReentrantLock();
   private int nextSerial;
 
   Phase(
@@ -164,7 +166,8 @@ public class Phase {
 
     if (isSerial()) {
       int ret;
-      synchronized (this) {
+      try {
+        guard.lock();
         ret = this.nextSerial;
 
         // Serial runs should not execute queries with non-positive
@@ -187,6 +190,8 @@ public class Phase {
 
           ++this.nextSerial;
         }
+      } finally {
+        guard.unlock();
       }
       return ret;
     } else {

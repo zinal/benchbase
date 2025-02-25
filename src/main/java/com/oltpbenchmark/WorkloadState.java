@@ -182,14 +182,15 @@ public class WorkloadState {
    * Called by workers to ask if they should stay awake in this phase
    */
   public void stayAwake() {
-    synchronized (this) {
-      while (workerNeedSleep.get() > 0) {
-        workerNeedSleep.decrementAndGet();
-        try {
-          stateSwitchSemaphore.acquire();
-        } catch (InterruptedException e) {
-          LOG.error("stayAwake() interrupted", e);
-        }
+    while (workerNeedSleep.get() > 0) {
+      if (workerNeedSleep.decrementAndGet() < 0) {
+        workerNeedSleep.set(0);
+        return;
+      }
+      try {
+        stateSwitchSemaphore.acquire();
+      } catch (InterruptedException e) {
+        LOG.error("stayAwake() interrupted", e);
       }
     }
   }

@@ -21,6 +21,7 @@ import com.oltpbenchmark.types.State;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,19 +33,25 @@ public final class BenchmarkState {
   private final CountDownLatch startBarrier;
   private final AtomicInteger notDoneCount;
   private final AtomicReference<State> state = new AtomicReference<>(State.WARMUP);
+  private final ReentrantLock ownerGuard;
 
   /**
    * @param numThreads number of threads involved in the test: including the master thread.
    */
-  public BenchmarkState(int numThreads) {
+  public BenchmarkState(int numThreads, ReentrantLock ownerGuard) {
     this.startBarrier = new CountDownLatch(numThreads);
     this.notDoneCount = new AtomicInteger(numThreads);
+    this.ownerGuard = ownerGuard;
 
     this.testStartNs = System.nanoTime();
   }
 
   public State getState() {
     return state.get();
+  }
+
+  public ReentrantLock getOwnerGuard() {
+    return ownerGuard;
   }
 
   public long getTestStartNs() {

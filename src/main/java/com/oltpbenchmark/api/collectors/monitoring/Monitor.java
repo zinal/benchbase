@@ -43,10 +43,13 @@ public class Monitor extends Thread {
     while (!Thread.currentThread().isInterrupted()) {
       // Compute the last throughput
       long measuredRequests = 0;
-      synchronized (this.testState) {
+      try {
+        this.testState.getOwnerGuard().lock();
         for (Worker<?> w : this.workers) {
           measuredRequests += w.getAndResetIntervalRequests();
         }
+      } finally {
+        this.testState.getOwnerGuard().unlock();
       }
       double seconds = interval / 1000d;
       double tps = (double) measuredRequests / seconds;

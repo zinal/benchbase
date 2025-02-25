@@ -55,7 +55,7 @@ public class ThreadBench implements Thread.UncaughtExceptionHandler {
     this.workConfs = workConfs;
     this.workerThreads = new ArrayList<>(workers.size());
     this.monitorInfo = monitorInfo;
-    this.testState = new BenchmarkState(workers.size() + 1);
+    this.testState = new BenchmarkState(workers.size() + 1, this.guard);
   }
 
   public static Results runRateLimitedBenchmark(
@@ -244,7 +244,8 @@ public class ThreadBench implements Thread.UncaughtExceptionHandler {
             testState.ackLatencyComplete();
           }
           for (WorkloadState workState : workStates) {
-            synchronized (workState) {
+            try {
+              workState.getGuard().lock();
               workState.switchToNextPhase();
               lowestRate = Integer.MAX_VALUE;
               phase = workState.getCurrentPhase();
@@ -266,6 +267,8 @@ public class ThreadBench implements Thread.UncaughtExceptionHandler {
                   lowestRate = phase.getRate();
                 }
               }
+            } finally {
+              workState.getGuard().unlock();
             }
           }
           if (phase != null) {
@@ -296,12 +299,10 @@ public class ThreadBench implements Thread.UncaughtExceptionHandler {
       // Update the test state appropriately
       State state = testState.getState();
       if (state == State.WARMUP && now >= warmup) {
-        synchronized (testState) {
-          if (phase != null && phase.isLatencyRun()) {
-            testState.startColdQuery();
-          } else {
-            testState.startMeasure();
-          }
+        if (phase != null && phase.isLatencyRun()) {
+          testState.startColdQuery();
+        } else {
+          testState.startMeasure();
         }
         start = now;
         LOG.info("{} :: Warmup complete, starting measurements.", StringUtil.bold("MEASURE"));
@@ -398,19 +399,20 @@ public class ThreadBench implements Thread.UncaughtExceptionHandler {
     // phases that were left in the test and signal error state.
     // The rest of the workflow to finish the experiment remains the same,
     // and partial metrics will be reported (i.e., until failure happened).
-    synchronized (testState) {
-      for (WorkloadConfiguration workConf : this.workConfs) {
-        synchronized (workConf.getWorkloadState()) {
-          WorkloadState workState = workConf.getWorkloadState();
-          Phase phase = workState.getCurrentPhase();
-          while (phase != null) {
-            workState.switchToNextPhase();
-            phase = workState.getCurrentPhase();
-          }
+    for (WorkloadConfiguration workConf : this.workConfs) {
+      final WorkloadState workState = workConf.getWorkloadState();
+      try {
+        workState.getGuard().lock();
+        Phase phase = workState.getCurrentPhase();
+        while (phase != null) {
+          workState.switchToNextPhase();
+          phase = workState.getCurrentPhase();
         }
+      } finally {
+        workState.getGuard().unlock();
       }
-      testState.signalError();
     }
+    testState.signalError();
   }
 
   private class WatchDogThread extends Thread {

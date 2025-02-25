@@ -81,6 +81,8 @@ public class Histogram<X extends Comparable<X>> implements JSONSerializable {
   /** A switchable flag that determines whether non-zero entries are kept or removed */
   protected boolean keep_zero_entries = false;
 
+  protected final ReentrantLock guard = new ReentrantLock();
+
   /** Constructor */
   public Histogram() {
     // Nothing...
@@ -321,43 +323,53 @@ public class Histogram<X extends Comparable<X>> implements JSONSerializable {
   }
 
   /** Reset the histogram's internal data */
-  public synchronized void clear() {
-    this.histogram.clear();
-    this.num_samples = 0;
-    this.min_count = 0;
-    if (this.min_count_values != null) {
-      this.min_count_values.clear();
-    }
-    this.min_value = null;
-    this.max_count = 0;
-    if (this.max_count_values != null) {
-      this.max_count_values.clear();
-    }
-    this.max_value = null;
+  public void clear() {
+    try {
+      guard.lock();
+      this.histogram.clear();
+      this.num_samples = 0;
+      this.min_count = 0;
+      if (this.min_count_values != null) {
+        this.min_count_values.clear();
+      }
+      this.min_value = null;
+      this.max_count = 0;
+      if (this.max_count_values != null) {
+        this.max_count_values.clear();
+      }
+      this.max_value = null;
 
-    this.dirty = true;
+      this.dirty = true;
+    } finally {
+      guard.unlock();
+    }
   }
 
   /**
    * Clear all the values stored in the histogram. The keys are only kept if KeepZeroEntries is
    * enabled, otherwise it does the same thing as clear()
    */
-  public synchronized void clearValues() {
-    if (this.keep_zero_entries) {
-      for (Entry<X, Integer> e : this.histogram.entrySet()) {
-        this.histogram.put(e.getKey(), 0);
-      } // FOR
-      this.num_samples = 0;
-      this.min_count = 0;
-      if (this.min_count_values != null) this.min_count_values.clear();
-      this.min_value = null;
-      this.max_count = 0;
-      if (this.max_count_values != null) this.max_count_values.clear();
-      this.max_value = null;
-    } else {
-      this.clear();
+  public void clearValues() {
+    try {
+      guard.lock();
+      if (this.keep_zero_entries) {
+        for (Entry<X, Integer> e : this.histogram.entrySet()) {
+          this.histogram.put(e.getKey(), 0);
+        } // FOR
+        this.num_samples = 0;
+        this.min_count = 0;
+        if (this.min_count_values != null) this.min_count_values.clear();
+        this.min_value = null;
+        this.max_count = 0;
+        if (this.max_count_values != null) this.max_count_values.clear();
+        this.max_value = null;
+      } else {
+        this.clear();
+      }
+      this.dirty = true;
+    } finally {
+      guard.unlock();
     }
-    this.dirty = true;
   }
 
   /**
@@ -371,22 +383,34 @@ public class Histogram<X extends Comparable<X>> implements JSONSerializable {
    * Increments the number of occurrences of this particular value i
    *
    * @param value the value to be added to the histogram
+   * @param i number of values to be added
    */
-  public synchronized void put(X value, int i) {
-    this._put(value, i);
+  public void put(X value, int i) {
+    try {
+      guard.lock();
+      this._put(value, i);
+    } finally {
+      guard.unlock();
+    }
   }
 
   /**
    * Set the number of occurrences of this particular value i
    *
    * @param value the value to be added to the histogram
+   * @param i number of values to be added
    */
-  public synchronized void set(X value, int i) {
-    Integer orig = this.get(value);
-    if (orig != null && orig != i) {
-      i = (orig > i ? -1 * (orig - i) : i - orig);
+  public void set(X value, int i) {
+    try {
+      guard.lock();
+      Integer orig = this.get(value);
+      if (orig != null && orig != i) {
+        i = (orig > i ? -1 * (orig - i) : i - orig);
+      }
+      this._put(value, i);
+    } finally {
+      guard.unlock();
     }
-    this._put(value, i);
   }
 
   /**
@@ -394,8 +418,13 @@ public class Histogram<X extends Comparable<X>> implements JSONSerializable {
    *
    * @param value the value to be added to the histogram
    */
-  public synchronized void put(X value) {
-    this._put(value, 1);
+  public void put(X value) {
+    try {
+      guard.lock();
+      this._put(value, 1);
+    } finally {
+      guard.unlock();
+    }
   }
 
   /** Increment all values in the histogram by one */
@@ -418,9 +447,14 @@ public class Histogram<X extends Comparable<X>> implements JSONSerializable {
    * @param values
    * @param count
    */
-  public synchronized void putAll(Collection<X> values, int count) {
-    for (X v : values) {
-      this._put(v, count);
+  public void putAll(Collection<X> values, int count) {
+    try {
+      guard.lock();
+      for (X v : values) {
+        this._put(v, count);
+      }
+    } finally {
+      guard.unlock();
     }
   }
 
@@ -429,11 +463,16 @@ public class Histogram<X extends Comparable<X>> implements JSONSerializable {
    *
    * @param other
    */
-  public synchronized void putHistogram(Histogram<X> other) {
-    for (Entry<X, Integer> e : other.histogram.entrySet()) {
-      if (e.getValue() > 0) {
-        this._put(e.getKey(), e.getValue());
+  public void putHistogram(Histogram<X> other) {
+    try {
+      guard.lock();
+      for (Entry<X, Integer> e : other.histogram.entrySet()) {
+        if (e.getValue() > 0) {
+          this._put(e.getKey(), e.getValue());
+        }
       }
+    } finally {
+      guard.unlock();
     }
   }
 
@@ -442,10 +481,15 @@ public class Histogram<X extends Comparable<X>> implements JSONSerializable {
    *
    * @param value
    */
-  public synchronized void removeAll(X value) {
-    Integer cnt = this.histogram.get(value);
-    if (cnt != null && cnt > 0) {
-      this._put(value, cnt * -1);
+  public void removeAll(X value) {
+    try {
+      guard.lock();
+      Integer cnt = this.histogram.get(value);
+      if (cnt != null && cnt > 0) {
+        this._put(value, cnt * -1);
+      }
+    } finally {
+      guard.unlock();
     }
   }
 
@@ -505,6 +549,7 @@ public class Histogram<X extends Comparable<X>> implements JSONSerializable {
   // ----------------------------------------------------------------------------
 
   /** Histogram Pretty Print */
+  @Override
   public String toString() {
     return (this.toString(MAX_CHARS, MAX_VALUE_LENGTH));
   }
@@ -516,7 +561,16 @@ public class Histogram<X extends Comparable<X>> implements JSONSerializable {
    * @param max_length
    * @return
    */
-  public synchronized String toString(Integer max_chars, Integer max_length) {
+  public String toString(Integer max_chars, Integer max_length) {
+    try {
+      guard.lock();
+      return prettyPrint(max_chars, max_length);
+    } finally {
+      guard.unlock();
+    }
+  }
+
+  private String prettyPrint(Integer max_chars, Integer max_length) {
     StringBuilder s = new StringBuilder();
     if (max_length == null) {
       max_length = MAX_VALUE_LENGTH;
@@ -534,7 +588,7 @@ public class Histogram<X extends Comparable<X>> implements JSONSerializable {
     String f = "%-" + max_length + "s [%" + max_ctr_length + "d] ";
     boolean first = true;
     boolean has_labels = this.hasDebugLabels();
-    for (Object value : this.histogram.keySet()) {
+    for (X value : this.histogram.keySet()) {
       if (!first) {
         s.append("\n");
       }
