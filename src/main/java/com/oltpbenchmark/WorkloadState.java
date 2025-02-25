@@ -19,8 +19,11 @@ package com.oltpbenchmark;
 
 import com.oltpbenchmark.types.State;
 import java.util.Iterator;
-import java.util.LinkedList;
 import java.util.List;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,32 +38,30 @@ public class WorkloadState {
   private static final Logger LOG = LoggerFactory.getLogger(WorkloadState.class);
 
   private final BenchmarkState benchmarkState;
-  private final LinkedList<SubmittedProcedure> workQueue = new LinkedList<>();
+  private final ConcurrentLinkedQueue<SubmittedProcedure> workQueue = new ConcurrentLinkedQueue<>();
   private final int num_terminals;
+  private final ReentrantLock guard = new ReentrantLock();
   private final Iterator<Phase> phaseIterator;
-
-  private int workersWaiting = 0;
-
-  @SuppressWarnings("unused") // never read
-  private int workersWorking = 0;
-
-  private int workerNeedSleep;
-
   private Phase currentPhase = null;
+  private final Semaphore stateSwitchSemaphore = new Semaphore(0);
+
+  private final AtomicInteger workersWaiting = new AtomicInteger(0);
+  private final AtomicInteger workersWorking = new AtomicInteger(0);
+  private final AtomicInteger workerNeedSleep = new AtomicInteger(0);
 
   public WorkloadState(BenchmarkState benchmarkState, List<Phase> works, int num_terminals) {
     this.benchmarkState = benchmarkState;
     this.num_terminals = num_terminals;
-    this.workerNeedSleep = num_terminals;
-
-    phaseIterator = works.iterator();
+    this.workerNeedSleep.set(num_terminals);
+    this.phaseIterator = works.iterator();
   }
 
   /** Add a request to do work. */
   public void addToQueue(int amount, boolean resetQueues) {
     int workAdded = 0;
 
-    synchronized (this) {
+    try {
+      guard.lock();
       if (resetQueues) {
         workQueue.clear();
       }
@@ -81,86 +82,84 @@ public class WorkloadState {
       }
 
       // Wake up sleeping workers to deal with the new work.
-      int numToWake = Math.min(workAdded, workersWaiting);
-      while (numToWake-- > 0) {
-        this.notify();
-      }
+      int numToWake = Math.min(workAdded, workersWaiting.get());
+      stateSwitchSemaphore.release(numToWake);
+    } finally {
+      guard.unlock();
     }
   }
 
   public void signalDone() {
     int current = this.benchmarkState.signalDone();
     if (current == 0) {
-      synchronized (this) {
-        if (workersWaiting > 0) {
-          this.notifyAll();
-        }
+      // Wake up all waiting threads for shutdown.
+      int numWorkers = workersWaiting.get();
+      if (numWorkers > 0) {
+        stateSwitchSemaphore.release(numWorkers);
       }
     }
   }
 
   /** Called by ThreadPoolThreads when waiting for work. */
   public SubmittedProcedure fetchWork() {
-    synchronized (this) {
-      if (currentPhase != null && currentPhase.isSerial()) {
-        ++workersWaiting;
+    final Phase phase = getCurrentPhase();
+    if (phase != null && phase.isSerial()) {
+      try {
+        workersWaiting.incrementAndGet();
         while (getGlobalState() == State.LATENCY_COMPLETE) {
           try {
-            this.wait();
+            stateSwitchSemaphore.acquire();
           } catch (InterruptedException e) {
             throw new RuntimeException(e);
           }
         }
-        --workersWaiting;
+      } finally {
+        workersWaiting.decrementAndGet();
+      }
 
-        if (getGlobalState() == State.EXIT || getGlobalState() == State.DONE) {
+      State state = getGlobalState();
+      switch (state) {
+        case EXIT, DONE -> {
           return null;
         }
-
-        ++workersWorking;
-        return new SubmittedProcedure(
-            currentPhase.chooseTransaction(getGlobalState() == State.COLD_QUERY));
       }
+
+      workersWorking.incrementAndGet();
+      return new SubmittedProcedure(currentPhase.chooseTransaction(state == State.COLD_QUERY));
     }
 
     // Unlimited-rate phases don't use the work queue.
-    if (currentPhase != null && !currentPhase.isRateLimited()) {
-      synchronized (this) {
-        ++workersWorking;
-      }
+    if (phase != null && !phase.isRateLimited()) {
+      workersWorking.incrementAndGet();
       return new SubmittedProcedure(
           currentPhase.chooseTransaction(getGlobalState() == State.COLD_QUERY));
     }
 
-    synchronized (this) {
-      // Sleep until work is available.
-      if (workQueue.peek() == null) {
-        workersWaiting += 1;
-        while (workQueue.peek() == null) {
-          if (this.benchmarkState.getState() == State.EXIT
-              || this.benchmarkState.getState() == State.DONE) {
-            return null;
-          }
-
-          try {
-            this.wait();
-          } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-          }
+    // Sleep until work is available.
+    SubmittedProcedure sp;
+    while ((sp = workQueue.poll()) == null) {
+      State state = getGlobalState();
+      switch (state) {
+        case EXIT, DONE -> {
+          return null;
         }
-        workersWaiting -= 1;
       }
-
-      ++workersWorking;
-
-      return workQueue.remove();
+      try {
+        workersWaiting.incrementAndGet();
+        stateSwitchSemaphore.acquire();
+      } catch (InterruptedException e) {
+        throw new RuntimeException(e);
+      } finally {
+        workersWaiting.decrementAndGet();
+      }
     }
+
+    workersWorking.incrementAndGet();
+    return sp;
   }
 
   public void finishedWork() {
-    synchronized (this) {
-      --workersWorking;
-    }
+    workersWorking.decrementAndGet();
   }
 
   public Phase getNextPhase() {
@@ -171,8 +170,11 @@ public class WorkloadState {
   }
 
   public Phase getCurrentPhase() {
-    synchronized (benchmarkState) {
+    try {
+      guard.lock();
       return currentPhase;
+    } finally {
+      guard.unlock();
     }
   }
 
@@ -181,44 +183,41 @@ public class WorkloadState {
    */
   public void stayAwake() {
     synchronized (this) {
-      while (workerNeedSleep > 0) {
-        workerNeedSleep--;
+      while (workerNeedSleep.get() > 0) {
+        workerNeedSleep.decrementAndGet();
         try {
-          this.wait();
+          stateSwitchSemaphore.acquire();
         } catch (InterruptedException e) {
-          LOG.error(e.getMessage(), e);
+          LOG.error("stayAwake() interrupted", e);
         }
       }
     }
   }
 
   public void switchToNextPhase() {
-    synchronized (this) {
+    try {
+      guard.lock();
       this.currentPhase = this.getNextPhase();
 
       // Clear the work from the previous phase.
       workQueue.clear();
 
-      // Determine how many workers need to sleep, then make sure they
-      // do.
-      if (this.currentPhase == null)
-      // Benchmark is over---wake everyone up so they can terminate
-      {
-        workerNeedSleep = 0;
+      // Determine how many workers need to sleep, then make sure they do.
+      if (this.currentPhase == null) {
+        // Benchmark is over---wake everyone up so they can terminate
+        workerNeedSleep.set(0);
       } else {
         this.currentPhase.resetSerial();
-        if (this.currentPhase.isDisabled())
-        // Phase disabled---everyone should sleep
-        {
-          workerNeedSleep = this.num_terminals;
-        } else
-        // Phase running---activate the appropriate # of terminals
-        {
-          workerNeedSleep = this.num_terminals - this.currentPhase.getActiveTerminals();
+        if (this.currentPhase.isDisabled()) {
+          // Phase disabled---everyone should sleep
+          workerNeedSleep.set(num_terminals);
+        } else {
+          // Phase running---activate the appropriate # of terminals
+          workerNeedSleep.set(num_terminals - currentPhase.getActiveTerminals());
         }
       }
-
-      this.notifyAll();
+    } finally {
+      guard.unlock();
     }
   }
 
@@ -253,5 +252,9 @@ public class WorkloadState {
 
   public long getTestStartNs() {
     return benchmarkState.getTestStartNs();
+  }
+
+  public ReentrantLock getGuard() {
+    return guard;
   }
 }

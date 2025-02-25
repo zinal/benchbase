@@ -47,7 +47,6 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
 
   private WorkloadState workloadState;
   private LatencyRecord latencies;
-  private final Statement currStatement;
 
   // Interval requests used by the monitor
   private final AtomicInteger intervalRequests = new AtomicInteger(0);
@@ -75,7 +74,6 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
     this.benchmark = benchmark;
     this.configuration = this.benchmark.getWorkloadConfiguration();
     this.workloadState = this.configuration.getWorkloadState();
-    this.currStatement = null;
     this.transactionTypes = this.configuration.getTransTypes();
 
     if (!this.configuration.getNewConnectionPerTxn()) {
@@ -168,17 +166,6 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
 
   public final Histogram<TransactionType> getTransactionRetryDifferentHistogram() {
     return (this.txtRetryDifferent);
-  }
-
-  /** Stop executing the current statement. */
-  public synchronized void cancelStatement() {
-    try {
-      if (this.currStatement != null) {
-        this.currStatement.cancel();
-      }
-    } catch (SQLException e) {
-      LOG.error("Failed to cancel statement: {}", e.getMessage());
-    }
   }
 
   @Override

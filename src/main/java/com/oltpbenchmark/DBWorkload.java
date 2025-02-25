@@ -51,6 +51,8 @@ public class DBWorkload {
   private static final String RATE_DISABLED = "disabled";
   private static final String RATE_UNLIMITED = "unlimited";
 
+  private static boolean useRealThreads = false;
+
   /**
    * @param args
    * @throws Exception
@@ -82,6 +84,10 @@ public class DBWorkload {
     int startFromId = 1;
     if (argsLine.hasOption("sf")) {
       startFromId = Integer.parseInt(argsLine.getOptionValue("sf"));
+    }
+
+    if (argsLine.hasOption("rt")) {
+      useRealThreads = true;
     }
 
     // Monitoring setup.
@@ -800,7 +806,8 @@ public class DBWorkload {
               bench.getBenchmarkName().toUpperCase(), num_phases, (num_phases > 1 ? "s" : "")));
       workConfs.add(bench.getWorkloadConfiguration());
     }
-    Results r = ThreadBench.runRateLimitedBenchmark(workers, workConfs, monitorInfo);
+    Results r =
+        ThreadBench.runRateLimitedBenchmark(useRealThreads, workers, workConfs, monitorInfo);
     LOG.info(SINGLE_LINE);
     LOG.info("Rate limited reqs/s: {}", r);
     return r;

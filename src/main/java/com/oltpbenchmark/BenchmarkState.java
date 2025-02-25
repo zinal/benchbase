@@ -28,7 +28,6 @@ public final class BenchmarkState {
 
   private static final Logger LOG = LoggerFactory.getLogger(BenchmarkState.class);
 
-  private final WorkloadConfiguration workloadConf;
   private final long testStartNs;
   private final CountDownLatch startBarrier;
   private final AtomicInteger notDoneCount;
@@ -36,24 +35,20 @@ public final class BenchmarkState {
 
   /**
    * @param numThreads number of threads involved in the test: including the master thread.
-   * @param workloadConf workload configuration reference
    */
-  public BenchmarkState(int numThreads, WorkloadConfiguration workloadConf) {
-    this.workloadConf = workloadConf;
+  public BenchmarkState(int numThreads) {
     this.startBarrier = new CountDownLatch(numThreads);
     this.notDoneCount = new AtomicInteger(numThreads);
 
     this.testStartNs = System.nanoTime();
   }
 
-  // Protected by this
+  public State getState() {
+    return state.get();
+  }
 
   public long getTestStartNs() {
     return testStartNs;
-  }
-
-  public State getState() {
-    return state.get();
   }
 
   /** Wait for all threads to call this. Returns once all the threads have entered. */
@@ -105,13 +100,15 @@ public final class BenchmarkState {
 
     int current = notDoneCount.decrementAndGet();
 
-    if (LOG.isDebugEnabled()) {
-      LOG.debug(String.format("%d workers are not done. Waiting until they finish", current));
-    }
     if (current == 0) {
       // We are the last thread to notice that we are done: wake any
       // blocked workers
       state.set(State.EXIT);
+      LOG.debug("All workers are done. Switched to EXIT state.");
+    } else {
+      if (LOG.isDebugEnabled()) {
+        LOG.debug(String.format("%d workers are not done. Waiting until they finish...", current));
+      }
     }
     return current;
   }

@@ -24,16 +24,12 @@ import com.oltpbenchmark.util.SQLUtil;
 import com.oltpbenchmark.util.ScriptRunner;
 import com.oltpbenchmark.util.ThreadUtil;
 import com.zaxxer.hikari.HikariDataSource;
-import io.micrometer.core.instrument.Gauge;
-import io.micrometer.core.instrument.Metrics;
-import io.micrometer.core.instrument.Timer;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
-import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.locks.ReentrantLock;
@@ -47,38 +43,13 @@ public abstract class BenchmarkModule {
 
   /** To protect the data source variable */
   private static final ReentrantLock dataSourceGuard = new ReentrantLock();
+
   /** Data source itself */
   private static HikariDataSource dataSource = null;
+
   /** Semaphore to count the available connections */
   private static final Semaphore connectionSemaphore = new Semaphore(0);
 
-  public static final Gauge SESSIONS_USED = Gauge.builder("sessions", BenchmarkModule::getUsedConnectionsCount)
-          .tag("state", "used")
-          .register(Metrics.globalRegistry);
-  public static final Gauge SESSIONS_QUEUE = Gauge.builder("session_queue_length", connectionSemaphore, Semaphore::getQueueLength)
-          .register(Metrics.globalRegistry);
-  public static final Timer.Builder GET_SESSION_DURATION = Timer.builder("get_session")
-          .serviceLevelObjectives(
-                  Duration.ofMillis(1),
-                  Duration.ofMillis(2),
-                  Duration.ofMillis(4),
-                  Duration.ofMillis(8),
-                  Duration.ofMillis(16),
-                  Duration.ofMillis(32),
-                  Duration.ofMillis(64),
-                  Duration.ofMillis(128),
-                  Duration.ofMillis(256),
-                  Duration.ofMillis(512),
-                  Duration.ofMillis(1024),
-                  Duration.ofMillis(2048),
-                  Duration.ofMillis(4096),
-                  Duration.ofMillis(8192),
-                  Duration.ofMillis(16384),
-                  Duration.ofMillis(32768),
-                  Duration.ofMillis(65536)
-          )
-          .publishPercentiles();
-  
   /** The workload configuration for this benchmark invocation */
   protected final WorkloadConfiguration workConf;
 
@@ -125,7 +96,7 @@ public abstract class BenchmarkModule {
 
   /**
    * Initialize the process-global data source.
-   * 
+   *
    * @param workConf Workload settings, which include the connection settings.
    */
   private static void initDataSource(WorkloadConfiguration workConf) {
@@ -134,17 +105,21 @@ public abstract class BenchmarkModule {
       if (dataSource != null) {
         return;
       }
-      LOG.info("Initializing database connection pool for {} max connections", workConf.getMaxConnections());
+      LOG.info(
+          "Initializing database connection pool for {} max connections",
+          workConf.getMaxConnections());
       dataSource = new HikariDataSource();
       dataSource.setJdbcUrl(workConf.getUrl());
       dataSource.setUsername(workConf.getUsername());
       dataSource.setPassword(workConf.getPassword());
       dataSource.setMaximumPoolSize(workConf.getMaxConnections());
-      dataSource.setMetricRegistry(Metrics.globalRegistry);
-      Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-        LOG.info("Closing database connection pool");
-        dataSource.close();
-      }));
+      Runtime.getRuntime()
+          .addShutdownHook(
+              new Thread(
+                  () -> {
+                    LOG.info("Closing database connection pool");
+                    dataSource.close();
+                  }));
     } catch (Exception e) {
       LOG.error("Unable to initialize DataSource: %s", e.toString());
       throw new RuntimeException("Unable to initialize DataSource", e);
@@ -159,24 +134,22 @@ public abstract class BenchmarkModule {
       return dataSource;
     } finally {
       dataSourceGuard.unlock();
-    }    
+    }
   }
 
   /**
    * Grabs the connection from the pool, if one is enabled, otherwise creates the new connection.
-   * 
-   * We use virtual threads. There is a limitted number of pooler provided connections.
-   * When pooler runs out of connections, it will block until one is available.
-   * Block in a way that carrier threads are blocked. Same time other virtual threads
-   * holding connections might be parked waiting for a carrier thread to be available.
-   * This will cause a deadlock. To avoid this, we use a semaphore to wait for a connection
-   * without blocking the carrier thread.
+   *
+   * <p>We use virtual threads. There is a limitted number of pooler provided connections. When
+   * pooler runs out of connections, it will block until one is available. Block in a way that
+   * carrier threads are blocked. Same time other virtual threads holding connections might be
+   * parked waiting for a carrier thread to be available. This will cause a deadlock. To avoid this,
+   * we use a semaphore to wait for a connection without blocking the carrier thread.
    *
    * @return The connection
    * @throws SQLException The exception
    */
   public final Connection makeConnection() throws SQLException {
-    long start = System.nanoTime();
     try {
       final HikariDataSource ds = getDataSource();
       connectionSemaphore.acquire();
@@ -195,9 +168,6 @@ public abstract class BenchmarkModule {
     } catch (InterruptedException e) {
       connectionSemaphore.release();
       throw new SQLException(e);
-    } finally {
-      long end = System.nanoTime();
-      GET_SESSION_DURATION.register(Metrics.globalRegistry).record(Duration.ofNanos(end - start));
     }
   }
 
@@ -207,7 +177,7 @@ public abstract class BenchmarkModule {
 
   public static double getUsedConnectionsCount() {
     final HikariDataSource ds = getDataSource();
-    if (ds==null) {
+    if (ds == null) {
       return 0.0;
     }
     return ds.getMaximumPoolSize() - connectionSemaphore.availablePermits();

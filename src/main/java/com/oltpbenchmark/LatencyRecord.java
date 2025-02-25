@@ -48,8 +48,13 @@ public class LatencyRecord implements Iterable<LatencyRecord.Sample> {
     addLatency(transType, startNanosecond, endNanosecond, workerId, phaseId, true);
   }
 
-  public void addLatency(int transType, long startNanosecond, long endNanosecond,
-          int workerId, int phaseId, boolean success) {
+  public void addLatency(
+      int transType,
+      long startNanosecond,
+      long endNanosecond,
+      int workerId,
+      int phaseId,
+      boolean success) {
 
     if (nextIndex == ALLOC_SIZE) {
       allocateChunk();
@@ -61,7 +66,8 @@ public class LatencyRecord implements Iterable<LatencyRecord.Sample> {
     int latencyMicroseconds = (int) ((endNanosecond - startNanosecond + 500) / 1000);
 
     chunk[nextIndex] =
-        new Sample(transType, startOffsetNanosecond, latencyMicroseconds, workerId, phaseId, success);
+        new Sample(
+            transType, startOffsetNanosecond, latencyMicroseconds, workerId, phaseId, success);
     ++nextIndex;
 
     lastNanosecond += startOffsetNanosecond;

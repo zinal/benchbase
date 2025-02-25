@@ -48,17 +48,18 @@ public final class TPCCLoader extends Loader<TPCCBenchmark> {
     // ITEM
     // This will be invoked first and executed in a single thread.
     if (this.startFromId == 1) {
-      threads.add(new LoaderThread(this.benchmark) {
-        @Override
-        public void load(Connection conn) {
-          loadItems(conn, TPCCConfig.configItemCount);
-        }
+      threads.add(
+          new LoaderThread(this.benchmark) {
+            @Override
+            public void load(Connection conn) {
+              loadItems(conn, TPCCConfig.configItemCount);
+            }
 
-        @Override
-        public void afterLoad() {
-          itemLatch.countDown();
-        }
-      });
+            @Override
+            public void afterLoad() {
+              itemLatch.countDown();
+            }
+          });
     }
 
     // WAREHOUSES

@@ -25,6 +25,7 @@ import com.oltpbenchmark.types.State;
 import com.oltpbenchmark.util.MonitorInfo;
 import com.oltpbenchmark.util.StringUtil;
 import java.util.*;
+import java.util.concurrent.locks.ReentrantLock;
 import org.apache.commons.collections4.map.ListOrderedMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,6 +36,8 @@ public class ThreadBench implements Thread.UncaughtExceptionHandler {
   // main thread.
   private static final int MONITOR_REJOIN_TIME = 60000;
 
+  private final boolean realThreads;
+  private final ReentrantLock guard = new ReentrantLock();
   private final BenchmarkState testState;
   private final List<? extends Worker<? extends BenchmarkModule>> workers;
   private final ArrayList<Thread> workerThreads;
@@ -45,9 +48,11 @@ public class ThreadBench implements Thread.UncaughtExceptionHandler {
   private Monitor monitor = null;
 
   private ThreadBench(
+      boolean realThreads,
       List<? extends Worker<? extends BenchmarkModule>> workers,
       List<WorkloadConfiguration> workConfs,
       MonitorInfo monitorInfo) {
+    this.realThreads = realThreads;
     this.workers = workers;
     this.workConfs = workConfs;
     this.workerThreads = new ArrayList<>(workers.size());
@@ -56,10 +61,11 @@ public class ThreadBench implements Thread.UncaughtExceptionHandler {
   }
 
   public static Results runRateLimitedBenchmark(
+      boolean realThreads,
       List<Worker<? extends BenchmarkModule>> workers,
       List<WorkloadConfiguration> workConfs,
       MonitorInfo monitorInfo) {
-    ThreadBench bench = new ThreadBench(workers, workConfs, monitorInfo);
+    ThreadBench bench = new ThreadBench(realThreads, workers, workConfs, monitorInfo);
     return bench.runRateLimitedMultiPhase();
   }
 
@@ -67,16 +73,15 @@ public class ThreadBench implements Thread.UncaughtExceptionHandler {
 
     for (Worker<?> worker : workers) {
       worker.initializeState();
-      Thread thread = new Thread(worker);
+      final Thread thread;
+      if (realThreads) {
+        thread = new Thread(worker);
+      } else {
+        thread = Thread.ofVirtual().unstarted(worker);
+      }
       thread.setUncaughtExceptionHandler(this);
       thread.start();
       this.workerThreads.add(thread);
-    }
-  }
-
-  private void interruptWorkers() {
-    for (Worker<?> worker : workers) {
-      worker.cancelStatement();
     }
   }
 
@@ -135,12 +140,20 @@ public class ThreadBench implements Thread.UncaughtExceptionHandler {
       }
     }
 
+    if (phase == null) {
+      // Below is the code which accesses phase, so it will fail anyway
+      throw new IllegalStateException("Missing current execution phase");
+    }
+
     // Change testState to cold query if execution is serial, since we don't
     // have a warm-up phase for serial execution but execute a cold and a
     // measured query in sequence.
-    if (phase != null && phase.isLatencyRun()) {
-      synchronized (testState) {
+    if (phase.isLatencyRun()) {
+      try {
+        guard.lock();
         testState.startColdQuery();
+      } finally {
+        guard.unlock();
       }
     }
 
@@ -227,7 +240,8 @@ public class ThreadBench implements Thread.UncaughtExceptionHandler {
         resetQueues = true;
 
         // Fetch a new Phase
-        synchronized (testState) {
+        try {
+          guard.lock();
           if (phase.isLatencyRun()) {
             testState.ackLatencyComplete();
           }
@@ -236,7 +250,6 @@ public class ThreadBench implements Thread.UncaughtExceptionHandler {
               workState.switchToNextPhase();
               lowestRate = Integer.MAX_VALUE;
               phase = workState.getCurrentPhase();
-              interruptWorkers();
               if (phase == null && !lastEntry) {
                 // Last phase
                 lastEntry = true;
@@ -265,6 +278,8 @@ public class ThreadBench implements Thread.UncaughtExceptionHandler {
             // lowestRate + 0.5);
             delta += phase.getTime() * 1000000000L;
           }
+        } finally {
+          guard.unlock();
         }
       }
 
@@ -289,7 +304,6 @@ public class ThreadBench implements Thread.UncaughtExceptionHandler {
           } else {
             testState.startMeasure();
           }
-          interruptWorkers();
         }
         start = now;
         LOG.info("{} :: Warmup complete, starting measurements.", StringUtil.bold("MEASURE"));
