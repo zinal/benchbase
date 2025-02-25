@@ -122,8 +122,15 @@ public abstract class BenchmarkModule {
           .addShutdownHook(
               new Thread(
                   () -> {
-                    LOG.info("Closing database connection pool");
-                    dataSource.close();
+                    try {
+                      dataSourceGuard.lock();
+                      if (dataSource != null) {
+                        LOG.debug("Closing database connection pool on shutdown");
+                        dataSource.close();
+                      }
+                    } finally {
+                      dataSourceGuard.unlock();
+                    }
                   }));
       try (Connection con = dataSource.getConnection()) {
         // if we succeeded, the connections are available
