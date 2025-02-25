@@ -17,8 +17,6 @@
 
 package com.oltpbenchmark.api;
 
-import static com.oltpbenchmark.types.State.MEASURE;
-
 import com.oltpbenchmark.*;
 import com.oltpbenchmark.api.Procedure.UserAbortException;
 import com.oltpbenchmark.types.DatabaseType;
@@ -316,7 +314,7 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
               // switch. In this scenario, just break from the switch.
               break;
             }
-            if (preState == MEASURE && postPhase.getId() == prePhase.getId()) {
+            if (preState == State.MEASURE && postPhase.getId() == prePhase.getId()) {
               latencies.addLatency(transactionType.getId(), start, end, this.id, prePhase.getId());
               intervalRequests.incrementAndGet();
             }

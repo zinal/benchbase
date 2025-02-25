@@ -50,6 +50,7 @@ public abstract class LoaderThread implements Runnable {
       LOG.error(msg, next_ex);
       throw new RuntimeException(ex);
     } finally {
+      benchmarkModule.returnConnection();
       afterLoad();
     }
   }

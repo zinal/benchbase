@@ -27,7 +27,6 @@ import com.zaxxer.hikari.HikariDataSource;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.Metrics;
 import io.micrometer.core.instrument.Timer;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -135,6 +134,7 @@ public abstract class BenchmarkModule {
       if (dataSource != null) {
         return;
       }
+      LOG.info("Initializing database connection pool for {} max connections", workConf.getMaxConnections());
       dataSource = new HikariDataSource();
       dataSource.setJdbcUrl(workConf.getUrl());
       dataSource.setUsername(workConf.getUsername());
