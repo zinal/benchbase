@@ -249,6 +249,9 @@ public abstract class AbstractTestCase<T extends BenchmarkModule> {
       this.conn.close();
     }
 
+    // Need to re-set the connection pool if one is defined.
+    BenchmarkModule.resetDataSource();
+
     cleanupServer();
   }
 

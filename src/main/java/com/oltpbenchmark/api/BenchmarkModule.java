@@ -77,9 +77,8 @@ public abstract class BenchmarkModule {
     this.dialects = new StatementDialects(workConf);
     // setClassLoader();
     this.classLoader = Thread.currentThread().getContextClassLoader();
-    if (!workConf.isDisableConnectionPooling()) {
-      initDataSource(workConf);
-    }
+    initDataSource(workConf);
+    connectionSemaphore.release(workConf.getMaxConnections());
   }
 
   /**
@@ -100,18 +99,24 @@ public abstract class BenchmarkModule {
    * @param workConf Workload settings, which include the connection settings.
    */
   private static void initDataSource(WorkloadConfiguration workConf) {
+    if (workConf.getUrl() == null || workConf.isDisableConnectionPooling()) {
+      return;
+    }
     try {
       dataSourceGuard.lock();
       if (dataSource != null) {
         return;
       }
-      LOG.info(
-          "Initializing database connection pool for {} max connections",
+      LOG.debug(
+          "Initializing database connection pool {} for {} max connections",
+          workConf.getUrl(),
           workConf.getMaxConnections());
       dataSource = new HikariDataSource();
       dataSource.setJdbcUrl(workConf.getUrl());
-      dataSource.setUsername(workConf.getUsername());
-      dataSource.setPassword(workConf.getPassword());
+      if (workConf.getUsername() != null && workConf.getUsername().length() > 0) {
+        dataSource.setUsername(workConf.getUsername());
+        dataSource.setPassword(workConf.getPassword());
+      }
       dataSource.setMaximumPoolSize(workConf.getMaxConnections());
       Runtime.getRuntime()
           .addShutdownHook(
@@ -120,8 +125,12 @@ public abstract class BenchmarkModule {
                     LOG.info("Closing database connection pool");
                     dataSource.close();
                   }));
+      try (Connection con = dataSource.getConnection()) {
+        // if we succeeded, the connections are available
+        con.setReadOnly(true);
+      }
     } catch (Exception e) {
-      LOG.error("Unable to initialize DataSource: %s", e.toString());
+      LOG.error("Unable to initialize DataSource: {}", e.toString());
       throw new RuntimeException("Unable to initialize DataSource", e);
     } finally {
       dataSourceGuard.unlock();
@@ -132,6 +141,22 @@ public abstract class BenchmarkModule {
     try {
       dataSourceGuard.lock();
       return dataSource;
+    } finally {
+      dataSourceGuard.unlock();
+    }
+  }
+
+  public static void resetDataSource() {
+    try {
+      dataSourceGuard.lock();
+      if (dataSource != null) {
+        try {
+          dataSource.close();
+        } catch (Exception ex) {
+          LOG.warn("Failed to properly close the data source on re-init", ex);
+        }
+        dataSource = null;
+      }
     } finally {
       dataSourceGuard.unlock();
     }
