@@ -87,15 +87,15 @@ public class ScriptRunner {
    * @throws IOException if there is an error reading from the Reader
    */
   private void runScript(Connection conn, Reader reader) throws IOException, SQLException {
-    StringBuffer command = null;
+    StringBuilder command = null;
     try (LineNumberReader lineReader = new LineNumberReader(reader)) {
-      String line = null;
+      String line;
       while ((line = lineReader.readLine()) != null) {
         if (LOG.isDebugEnabled()) {
           LOG.debug(line);
         }
         if (command == null) {
-          command = new StringBuffer();
+          command = new StringBuilder();
         }
         String trimmedLine = line.trim();
         line = line.replaceAll("\\-\\-.*$", ""); // remove comments in line;
@@ -112,13 +112,14 @@ public class ScriptRunner {
 
             boolean hasResults = false;
             final String sql = command.toString().trim();
+            LOG.info("SQL> {}", sql);
             if (stopOnError) {
               hasResults = statement.execute(sql);
             } else {
               try {
                 statement.execute(sql);
               } catch (SQLException e) {
-                LOG.error(e.getMessage(), e);
+                LOG.error("Statement execution failed, moving forward", e);
               }
             }
 

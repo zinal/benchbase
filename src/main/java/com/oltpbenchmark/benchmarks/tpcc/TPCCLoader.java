@@ -26,7 +26,6 @@ import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
-import java.util.concurrent.CountDownLatch;
 
 /** TPC-C Benchmark Loader */
 public final class TPCCLoader extends Loader<TPCCBenchmark> {
@@ -43,21 +42,15 @@ public final class TPCCLoader extends Loader<TPCCBenchmark> {
   @Override
   public List<LoaderThread> createLoaderThreads() {
     List<LoaderThread> threads = new ArrayList<>();
-    final CountDownLatch itemLatch = new CountDownLatch(1);
 
     // ITEM
-    // This will be invoked first and executed in a single thread.
+    // This will be executed in a single thread.
     if (this.startFromId == 1) {
       threads.add(
           new LoaderThread(this.benchmark) {
             @Override
             public void load(Connection conn) {
               loadItems(conn, TPCCConfig.configItemCount);
-            }
-
-            @Override
-            public void afterLoad() {
-              itemLatch.countDown();
             }
           });
     }
@@ -123,18 +116,6 @@ public final class TPCCLoader extends Loader<TPCCBenchmark> {
               // ORDER LINES
               loadOrderLines(
                   conn, w_id, TPCCConfig.configDistPerWhse, TPCCConfig.configCustPerDist);
-            }
-
-            @Override
-            public void beforeLoad() {
-
-              // Make sure that we load the ITEM table first
-
-              try {
-                itemLatch.await();
-              } catch (InterruptedException ex) {
-                throw new RuntimeException(ex);
-              }
             }
           };
       threads.add(t);
