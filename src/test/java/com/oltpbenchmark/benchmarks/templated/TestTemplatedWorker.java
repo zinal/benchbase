@@ -94,7 +94,7 @@ public class TestTemplatedWorker extends AbstractTestWorker<TemplatedBenchmark> 
     this.tpccBenchmark = new TPCCBenchmark(this.workConf);
     conn = this.tpccBenchmark.makeConnection();
     assertNotNull(conn);
-    this.tpccBenchmark.refreshCatalog();
+    this.tpccBenchmark.refreshCatalog(true);
     catalog = this.tpccBenchmark.getCatalog();
     assertNotNull(catalog);
   }

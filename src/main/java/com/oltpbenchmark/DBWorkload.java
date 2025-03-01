@@ -515,7 +515,7 @@ public class DBWorkload {
 
     // Refresh the catalog.
     for (BenchmarkModule benchmark : benchList) {
-      benchmark.refreshCatalog();
+      benchmark.refreshCatalog(false);
     }
 
     // Clear the Benchmark's Database
@@ -523,9 +523,9 @@ public class DBWorkload {
       try {
         for (BenchmarkModule benchmark : benchList) {
           LOG.info("Clearing {} database...", benchmark.getBenchmarkName().toUpperCase());
-          benchmark.refreshCatalog();
+          benchmark.refreshCatalog(false);
           benchmark.clearDatabase();
-          benchmark.refreshCatalog();
+          benchmark.refreshCatalog(false);
           LOG.info("Finished clearing {} database...", benchmark.getBenchmarkName().toUpperCase());
         }
       } catch (Throwable ex) {

@@ -89,6 +89,8 @@ public final class AuctionMarkWorker extends Worker<AuctionMarkBenchmark> {
             executeCloseAuctions(conn, (CloseAuctions) proc);
           } catch (Exception ex) {
             throw new RuntimeException(ex);
+          } finally {
+            getBenchmark().returnConnection();
           }
         } else {
           AuctionMarkWorker.this.closeAuctions_flag.set(true);

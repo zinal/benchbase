@@ -37,7 +37,7 @@
             <properties>
                 <exec.vmArgs></exec.vmArgs>
                 <exec.args>${exec.vmArgs} -classpath %classpath ${exec.mainClass} ${exec.appArgs}</exec.args>
-                <exec.appArgs>-b tpcc -c config.1.xml --create=true --load=false --execute=false</exec.appArgs>
+                <exec.appArgs>-b tpcc -d results_4 -c config.1.xml --create=false --load=false --execute=true --start-from-id 76</exec.appArgs>
                 <exec.mainClass>com.oltpbenchmark.DBWorkload</exec.mainClass>
                 <exec.executable>java</exec.executable>
                 <exec.workingdir>/home/zinal/benchbase-oracle</exec.workingdir>
@@ -55,7 +55,7 @@
             <properties>
                 <exec.vmArgs>-agentlib:jdwp=transport=dt_socket,server=n,address=${jpda.address}</exec.vmArgs>
                 <exec.args>${exec.vmArgs} -classpath %classpath ${exec.mainClass} ${exec.appArgs}</exec.args>
-                <exec.appArgs>-b tpcc -c config.1.xml --create=true --load=false --execute=false</exec.appArgs>
+                <exec.appArgs>-b tpcc -d results_4 -c config.1.xml --create=false --load=false --execute=true --start-from-id 76</exec.appArgs>
                 <exec.mainClass>com.oltpbenchmark.DBWorkload</exec.mainClass>
                 <exec.executable>java</exec.executable>
                 <jpda.listen>true</jpda.listen>
@@ -76,7 +76,7 @@
                 <exec.args>${exec.vmArgs} -classpath %classpath ${exec.mainClass} ${exec.appArgs}</exec.args>
                 <exec.mainClass>com.oltpbenchmark.DBWorkload</exec.mainClass>
                 <exec.executable>java</exec.executable>
-                <exec.appArgs>-b tpcc -c config.1.xml --create=true --load=false --execute=false</exec.appArgs>
+                <exec.appArgs>-b tpcc -d results_4 -c config.1.xml --create=false --load=false --execute=true --start-from-id 76</exec.appArgs>
                 <exec.workingdir>/home/zinal/benchbase-oracle</exec.workingdir>
             </properties>
         </action>

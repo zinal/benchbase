@@ -86,6 +86,8 @@ public final class EpinionsBenchmark extends BenchmarkModule {
         if (LOG.isDebugEnabled()) {
           LOG.debug("Loaded: {} Item ids", item_ids.size());
         }
+      } finally {
+        this.returnConnection();
       }
 
       // Now create the workers.

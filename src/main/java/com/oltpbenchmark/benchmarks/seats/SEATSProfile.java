@@ -282,6 +282,8 @@ public class SEATSProfile {
       Config results;
       try (Connection conn = benchmark.makeConnection()) {
         results = proc.run(conn);
+      } finally {
+        benchmark.returnConnection();
       }
       // CONFIG_PROFILE
       this.loadConfigProfile(results.getConfigProfile());

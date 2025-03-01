@@ -41,5 +41,5 @@ if [[ -z "$java" ]]; then
     exit 1
 fi
 
-echo "DEBUG: $java -Xmx$memory -jar benchbase.jar -b tpcc '${args[@]}'"
+echo "DEBUG: $java -Xmx$memory -jar benchbase.jar -b tpcc ${args[@]}"
 exec $java -Xmx$memory -jar benchbase.jar -b tpcc "${args[@]}"

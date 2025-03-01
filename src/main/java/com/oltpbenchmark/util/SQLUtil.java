@@ -543,14 +543,17 @@ WHERE t.name='%s' AND c.name='%s'
 
   /** Extract the catalog from the database. */
   public static AbstractCatalog getCatalog(
-      BenchmarkModule benchmarkModule, DatabaseType databaseType, Connection connection)
+      BenchmarkModule benchmarkModule,
+      DatabaseType databaseType,
+      Connection connection,
+      boolean loadIndexes)
       throws SQLException {
     switch (databaseType) {
       case NOISEPAGE: // fall-through
       case HSQLDB:
         return getCatalogHSQLDB(benchmarkModule);
       default:
-        return getCatalogDirect(databaseType, connection);
+        return getCatalogDirect(databaseType, connection, loadIndexes);
     }
   }
 
@@ -566,8 +569,8 @@ WHERE t.name='%s' AND c.name='%s'
   }
 
   /** Extract catalog information from the database directly. */
-  private static AbstractCatalog getCatalogDirect(DatabaseType databaseType, Connection connection)
-      throws SQLException {
+  private static AbstractCatalog getCatalogDirect(
+      DatabaseType databaseType, Connection connection, boolean loadIndexes) throws SQLException {
     DatabaseMetaData md = connection.getMetaData();
 
     String separator = md.getIdentifierQuoteString();
@@ -618,33 +621,8 @@ WHERE t.name='%s' AND c.name='%s'
           }
         }
 
-        try (ResultSet idx_rs = md.getIndexInfo(catalog, schema, table_name, false, false)) {
-          while (idx_rs.next()) {
-            int idx_type = idx_rs.getShort("TYPE");
-            if (idx_type == DatabaseMetaData.tableIndexStatistic) {
-              continue;
-            }
-            boolean idx_unique = (!idx_rs.getBoolean("NON_UNIQUE"));
-            String idx_name = idx_rs.getString("INDEX_NAME");
-            int idx_col_pos = idx_rs.getInt("ORDINAL_POSITION") - 1;
-            String idx_col_name = idx_rs.getString("COLUMN_NAME");
-            String sort = idx_rs.getString("ASC_OR_DESC");
-            SortDirectionType idx_direction;
-            if (sort != null) {
-              idx_direction =
-                  sort.equalsIgnoreCase("A") ? SortDirectionType.ASC : SortDirectionType.DESC;
-            } else {
-              idx_direction = null;
-            }
-
-            Index catalog_idx = catalog_tbl.getIndex(idx_name);
-            if (catalog_idx == null) {
-              catalog_idx = new Index(idx_name, separator, catalog_tbl, idx_type, idx_unique);
-              catalog_tbl.addIndex(catalog_idx);
-            }
-
-            catalog_idx.addColumn(idx_col_name, idx_direction, idx_col_pos);
-          }
+        if (loadIndexes) {
+          loadIndexes(md, catalog, schema, catalog_tbl);
         }
 
         tables.put(table_name, catalog_tbl);
@@ -669,6 +647,39 @@ WHERE t.name='%s' AND c.name='%s'
     }
 
     return new Catalog(tables);
+  }
+
+  private static void loadIndexes(
+      DatabaseMetaData md, String catalog, String schema, Table catalog_tbl) throws SQLException {
+    String separator = md.getIdentifierQuoteString();
+    try (ResultSet idx_rs = md.getIndexInfo(catalog, schema, catalog_tbl.getName(), false, false)) {
+      while (idx_rs.next()) {
+        int idx_type = idx_rs.getShort("TYPE");
+        if (idx_type == DatabaseMetaData.tableIndexStatistic) {
+          continue;
+        }
+        boolean idx_unique = (!idx_rs.getBoolean("NON_UNIQUE"));
+        String idx_name = idx_rs.getString("INDEX_NAME");
+        int idx_col_pos = idx_rs.getInt("ORDINAL_POSITION") - 1;
+        String idx_col_name = idx_rs.getString("COLUMN_NAME");
+        String sort = idx_rs.getString("ASC_OR_DESC");
+        SortDirectionType idx_direction;
+        if (sort != null) {
+          idx_direction =
+              sort.equalsIgnoreCase("A") ? SortDirectionType.ASC : SortDirectionType.DESC;
+        } else {
+          idx_direction = null;
+        }
+
+        Index catalog_idx = catalog_tbl.getIndex(idx_name);
+        if (catalog_idx == null) {
+          catalog_idx = new Index(idx_name, separator, catalog_tbl, idx_type, idx_unique);
+          catalog_tbl.addIndex(catalog_idx);
+        }
+
+        catalog_idx.addColumn(idx_col_name, idx_direction, idx_col_pos);
+      }
+    }
   }
 
   public static boolean isDuplicateKeyException(Exception ex) {

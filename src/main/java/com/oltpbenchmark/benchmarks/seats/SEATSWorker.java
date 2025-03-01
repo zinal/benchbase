@@ -279,6 +279,8 @@ public final class SEATSWorker extends Worker<SEATSBenchmark> {
       this.executeFindOpenSeats(conn, proc);
     } catch (SQLException ex) {
       throw new RuntimeException(ex);
+    } finally {
+      getBenchmark().returnConnection();
     }
 
     if (LOG.isDebugEnabled()) {

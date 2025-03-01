@@ -64,6 +64,8 @@ public final class SIBenchmark extends BenchmarkModule {
 
     } catch (SQLException e) {
       LOG.error(e.getMessage(), e);
+    } finally {
+      this.returnConnection();
     }
     return workers;
   }

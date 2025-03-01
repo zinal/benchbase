@@ -70,6 +70,8 @@ public final class HYADAPTBenchmark extends BenchmarkModule {
       LOG.info("Init Record Count :: {}", init_record_count);
     } catch (SQLException e) {
       LOG.error(e.getMessage(), e);
+    } finally {
+      this.returnConnection();
     }
 
     return workers;

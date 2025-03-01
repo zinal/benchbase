@@ -182,29 +182,30 @@ public abstract class BenchmarkModule {
    * @throws SQLException The exception
    */
   public final Connection makeConnection() throws SQLException {
-    try {
-      final HikariDataSource ds = getDataSource();
-      connectionSemaphore.acquire();
-      if (ds != null) {
+    final HikariDataSource ds = getDataSource();
+    if (ds != null) {
+      try {
+        connectionSemaphore.acquire();
         return ds.getConnection();
+      } catch (InterruptedException ix) {
+        throw new SQLException("Connection semaphore interrupted", ix);
+      } catch (SQLException e) {
+        connectionSemaphore.release();
+        throw e;
       }
-      if (StringUtils.isEmpty(workConf.getUsername())) {
-        return DriverManager.getConnection(workConf.getUrl());
-      } else {
-        return DriverManager.getConnection(
-            workConf.getUrl(), workConf.getUsername(), workConf.getPassword());
-      }
-    } catch (SQLException e) {
-      connectionSemaphore.release();
-      throw e;
-    } catch (InterruptedException e) {
-      connectionSemaphore.release();
-      throw new SQLException(e);
+    }
+    if (StringUtils.isEmpty(workConf.getUsername())) {
+      return DriverManager.getConnection(workConf.getUrl());
+    } else {
+      return DriverManager.getConnection(
+          workConf.getUrl(), workConf.getUsername(), workConf.getPassword());
     }
   }
 
   public final void returnConnection() {
-    connectionSemaphore.release();
+    if (getDataSource() != null) {
+      connectionSemaphore.release();
+    }
   }
 
   public static double getUsedConnectionsCount() {
@@ -334,7 +335,7 @@ public abstract class BenchmarkModule {
     return (this.makeWorkersImpl());
   }
 
-  public final void refreshCatalog() throws SQLException {
+  public final void refreshCatalog(boolean loadIndexes) throws SQLException {
     if (this.catalog != null) {
       try {
         this.catalog.close();
@@ -344,7 +345,10 @@ public abstract class BenchmarkModule {
     }
     try (Connection conn = this.makeConnection()) {
       this.catalog =
-          SQLUtil.getCatalog(this, this.getWorkloadConfiguration().getDatabaseType(), conn);
+          SQLUtil.getCatalog(
+              this, this.getWorkloadConfiguration().getDatabaseType(), conn, loadIndexes);
+    } finally {
+      this.returnConnection();
     }
   }
 
@@ -355,6 +359,8 @@ public abstract class BenchmarkModule {
   public final void createDatabase() throws SQLException, IOException {
     try (Connection conn = this.makeConnection()) {
       this.createDatabase(this.workConf.getDatabaseType(), conn);
+    } finally {
+      this.returnConnection();
     }
   }
 
@@ -400,6 +406,8 @@ public abstract class BenchmarkModule {
             dbType);
         runner.runScript(scriptPath);
       }
+    } finally {
+      this.returnConnection();
     }
   }
 
@@ -445,7 +453,6 @@ public abstract class BenchmarkModule {
   }
 
   public final void clearDatabase() throws SQLException {
-
     try (Connection conn = this.makeConnection()) {
       Loader<? extends BenchmarkModule> loader = this.makeLoaderImpl();
       if (loader != null) {
@@ -453,6 +460,8 @@ public abstract class BenchmarkModule {
         loader.unload(conn, this.catalog);
         conn.commit();
       }
+    } finally {
+      this.returnConnection();
     }
   }
 

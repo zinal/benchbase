@@ -62,7 +62,7 @@ public abstract class AbstractTestBenchmarkModule<T extends BenchmarkModule>
     this.benchmark.createDatabase();
 
     // Make sure that we get back some tables
-    this.benchmark.refreshCatalog();
+    this.benchmark.refreshCatalog(true);
     AbstractCatalog catalog = this.benchmark.getCatalog();
     assertNotNull(catalog);
     assertFalse(catalog.getTables().isEmpty());

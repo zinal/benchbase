@@ -86,6 +86,8 @@ public final class YCSBBenchmark extends BenchmarkModule {
         for (int i = 0; i < workConf.getTerminals(); ++i) {
           workers.add(new YCSBWorker(this, i, init_record_count + 1));
         }
+      } finally {
+        this.returnConnection();
       }
     } catch (SQLException e) {
       LOG.error(e.getMessage(), e);

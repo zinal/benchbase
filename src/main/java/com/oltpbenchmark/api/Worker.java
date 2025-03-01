@@ -23,7 +23,6 @@ import com.oltpbenchmark.types.DatabaseType;
 import com.oltpbenchmark.types.State;
 import com.oltpbenchmark.types.TransactionStatus;
 import com.oltpbenchmark.util.Histogram;
-import com.oltpbenchmark.util.SQLUtil;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -31,11 +30,11 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.SQLRecoverableException;
 import java.sql.Statement;
-import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Random;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -76,16 +75,6 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
     this.workloadState = this.configuration.getWorkloadState();
     this.transactionTypes = this.configuration.getTransTypes();
     this.resultStats = new ResultStats(this.transactionTypes);
-
-    if (!this.configuration.getNewConnectionPerTxn()) {
-      try {
-        this.conn = this.benchmark.makeConnection();
-        this.conn.setAutoCommit(false);
-        this.conn.setTransactionIsolation(this.configuration.getIsolationMode());
-      } catch (SQLException ex) {
-        throw new RuntimeException("Failed to connect to database", ex);
-      }
-    }
 
     // Generate all the Procedures that we're going to need
     this.procedures.putAll(this.benchmark.getProcedures());
@@ -385,284 +374,117 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
 
     TransactionStatus status = TransactionStatus.UNKNOWN;
 
-    try {
-      int retryCount = 0;
-      int maxRetryCount = configuration.getMaxRetries();
+    int retryCount = 0;
+    int maxRetryCount = configuration.getMaxRetries();
 
-      while (retryCount < maxRetryCount && this.workloadState.getGlobalState() != State.DONE) {
+    while (retryCount < maxRetryCount && this.workloadState.getGlobalState() != State.DONE) {
 
-        if (this.conn == null) {
-          try {
-            if (!this.configuration.getNewConnectionPerTxn()) {
-              if (retryCount > 0) {
-                Duration delay = Duration.ofSeconds(Math.min(retryCount, 5));
-                LOG.info("Backing off {} seconds before reconnecting.", delay.toSeconds());
-                try {
-                  Thread.sleep(delay);
-                } catch (InterruptedException ex) {
-                  // pass
-                }
-              } else {
-                LOG.info("(Re)connecting to database.");
-              }
-            }
-            this.conn = this.benchmark.makeConnection();
-            this.conn.setAutoCommit(false);
-            this.conn.setTransactionIsolation(this.configuration.getIsolationMode());
-          } catch (SQLException ex) {
-            if (LOG.isDebugEnabled()) {
-              LOG.debug(String.format("%s failed to open a connection...", this));
-            }
-            retryCount++;
-            continue;
-          }
+      try {
+        this.conn = this.benchmark.makeConnection();
+        this.conn.setAutoCommit(false);
+        this.conn.setTransactionIsolation(this.configuration.getIsolationMode());
+      } catch (SQLException ex) {
+        LOG.debug("{} failed to get a connection...", this, ex);
+        retryCount++;
+        try {
+          Thread.sleep(ThreadLocalRandom.current().nextLong(50L, 300L));
+        } catch (InterruptedException ix) {
+        }
+        continue;
+      }
+
+      try {
+
+        if (LOG.isDebugEnabled()) {
+          LOG.debug(String.format("%s %s attempting...", this, transactionType));
         }
 
+        status = this.executeWork(conn, transactionType);
+
+        if (LOG.isDebugEnabled()) {
+          LOG.debug(
+              String.format(
+                  "%s %s completed with status [%s]...", this, transactionType, status.name()));
+        }
+
+        if (LOG.isDebugEnabled()) {
+          LOG.debug(String.format("%s %s committing...", this, transactionType));
+        }
+
+        conn.commit();
+
+        break;
+
+      } catch (UserAbortException ex) {
         try {
+          conn.rollback();
+        } catch (SQLException ex2) {
+          LOG.warn("SQLException caught while rolling back transaction.", ex2);
+        }
 
-          if (LOG.isDebugEnabled()) {
-            LOG.debug(String.format("%s %s attempting...", this, transactionType));
-          }
+        ABORT_LOG.debug(String.format("%s Aborted", transactionType), ex);
+        status = TransactionStatus.USER_ABORTED;
+        break;
 
-          status = this.executeWork(conn, transactionType);
+      } catch (SQLException ex) {
+        try {
+          conn.rollback();
+        } catch (SQLException ex2) {
+          LOG.warn("SQLException caught while attempting to rollback transaction.", ex2);
+        }
 
-          if (LOG.isDebugEnabled()) {
-            LOG.debug(
-                String.format(
-                    "%s %s completed with status [%s]...", this, transactionType, status.name()));
-          }
+        if (isRetryable(ex)) {
+          LOG.debug(
+              String.format(
+                  "Retryable SQLException occurred during [%s]... current retry attempt [%d], max retry attempts [%d], sql state [%s], error code [%d].",
+                  transactionType, retryCount, maxRetryCount, ex.getSQLState(), ex.getErrorCode()),
+              ex);
 
-          if (LOG.isDebugEnabled()) {
-            LOG.debug(String.format("%s %s committing...", this, transactionType));
-          }
+          status = TransactionStatus.RETRY;
+          retryCount++;
 
-          conn.commit();
-
-          break;
-
-        } catch (UserAbortException ex) {
           try {
-            conn.rollback();
-          } catch (SQLException ex2) {
-            LOG.error("SQLException caught while rolling back transaction.", ex2);
-            // force a reconnection
-            conn = null;
+            Thread.sleep(ThreadLocalRandom.current().nextLong(50L, 300L));
+          } catch (InterruptedException ix) {
           }
 
-          ABORT_LOG.debug(String.format("%s Aborted", transactionType), ex);
+        } else {
+          LOG.warn(
+              String.format(
+                  "SQLException occurred during [%s] and will not be retried... sql state [%s], error code [%d].",
+                  transactionType, ex.getSQLState(), ex.getErrorCode()),
+              ex);
 
-          status = TransactionStatus.USER_ABORTED;
+          status = TransactionStatus.ERROR;
 
           break;
+        }
 
-        } catch (SQLException ex) {
-          // check if we should attempt to ignore connection errors and reconnect
-          boolean isConnectionErrorException = SQLUtil.isConnectionErrorException(ex);
-
-          if (indicatesReadOnly(ex)) {
-            if (SQLUtil.isConnectionOK(conn)) {
-              conn.setReadOnly(true);
-            }
+      } finally {
+        if (this.conn != null) {
+          try {
+            this.conn.close();
+            this.conn = null;
+          } catch (SQLException e) {
+            LOG.error("Connection couldn't be closed/returned.", e);
           }
+          this.benchmark.returnConnection();
+        } else if (this.conn == null) {
+          LOG.warn("Connection error detected.");
+        }
 
-          // if the connection is closed, we can't rollback
-          if (!isConnectionErrorException && SQLUtil.isConnectionOK(conn)) {
-            // if the error is that we're attempting a write transaction to a read-only secondary,
-            // then we can't rollback anyways, so don't bother trying
-            if (conn.isReadOnly()) {
-              // in that case, we should close the connection and possibly try again
-              LOG.debug(
-                  String.format(
-                      "Won't attempt a rollback since the SQL connection looks read-only during [%s]... current retry attempt [%d], max retry attempts [%d], sql state [%s], error code [%d].",
-                      transactionType,
-                      retryCount,
-                      maxRetryCount,
-                      ex.getSQLState(),
-                      ex.getErrorCode()),
-                  ex);
-              try {
-                conn.close();
-              } catch (SQLException ex2) {
-                LOG.error("SQLException caught while closing connection.", ex2);
-              }
-              // force a reconnection
-              conn = null;
-            }
-            // otherwise, we should attempt a rollback
-            else {
-              LOG.debug(
-                  String.format(
-                      "Attempting a rollback since a problem was detected during [%s]... current retry attempt [%d], max retry attempts [%d], sql state [%s], error code [%d].",
-                      transactionType,
-                      retryCount,
-                      maxRetryCount,
-                      ex.getSQLState(),
-                      ex.getErrorCode()),
-                  ex);
-              try {
-                conn.rollback();
-              } catch (SQLException ex2) {
-                LOG.error("SQLException caught while attempting to rollback transaction.", ex2);
-                // force a reconnection
-                conn = null;
-              }
-            }
-          }
-          // connection is closed, try a reconnect
-          else {
-            if (this.configuration.getReconnectOnConnectionFailure()) {
-              LOG.debug(
-                  String.format(
-                      "Won't attempt a rollback since a problem with the SQL connection was detected during [%s]... current retry attempt [%d], max retry attempts [%d], sql state [%s], error code [%d].",
-                      transactionType,
-                      retryCount,
-                      maxRetryCount,
-                      ex.getSQLState(),
-                      ex.getErrorCode()),
-                  ex);
-            } else {
-              // old behavior, will likley result in an exception thrown
-              // and an aborted benchmark due to the connection problem
-              LOG.debug(
-                  String.format(
-                      "Attempting a rollback since a problem was detected during [%s] (despite connection error detection - see reconnectOnConnectionFailure setting)... current retry attempt [%d], max retry attempts [%d], sql state [%s], error code [%d].",
-                      transactionType,
-                      retryCount,
-                      maxRetryCount,
-                      ex.getSQLState(),
-                      ex.getErrorCode()),
-                  ex);
-              try {
-                conn.rollback();
-              } catch (SQLException ex2) {
-                LOG.error("SQLException caught while attempting to rollback transaction.", ex2);
-                // force a reconnection
-                conn = null;
-              }
-            }
-          }
-
-          // check the connection (after possible reconnection) again
-          if ((isConnectionErrorException || !SQLUtil.isConnectionOK(conn))
-              && this.configuration.getReconnectOnConnectionFailure()) {
-            LOG.debug(
-                String.format(
-                    "Retryable SQL connection exception occurred during [%s]... current retry attempt [%d], max retry attempts [%d], sql state [%s], error code [%d].",
-                    transactionType,
-                    retryCount,
-                    maxRetryCount,
-                    ex.getSQLState(),
-                    ex.getErrorCode()),
-                ex);
-
-            // force a reconnection
-            try {
-              if (conn != null) {
-                conn.close();
-              }
-            } catch (Exception e) {
-              LOG.warn("Failed to close faulty connection (somewhat expected).", e);
-            } finally {
-              conn = null;
-            }
-
-            status = TransactionStatus.RETRY_DIFFERENT;
-
-            retryCount++;
-          } else if (isRetryable(ex)) {
-            LOG.debug(
-                String.format(
-                    "Retryable SQLException occurred during [%s]... current retry attempt [%d], max retry attempts [%d], sql state [%s], error code [%d].",
-                    transactionType,
-                    retryCount,
-                    maxRetryCount,
-                    ex.getSQLState(),
-                    ex.getErrorCode()),
-                ex);
-
-            status = TransactionStatus.RETRY;
-
-            retryCount++;
-          } else {
-            LOG.warn(
-                String.format(
-                    "SQLException occurred during [%s] and will not be retried... sql state [%s], error code [%d].",
-                    transactionType, ex.getSQLState(), ex.getErrorCode()),
-                ex);
-
-            status = TransactionStatus.ERROR;
-
-            break;
-          }
-        } finally {
-          if (this.configuration.getNewConnectionPerTxn() && this.conn != null) {
-            try {
-              this.conn.close();
-              this.conn = null;
-            } catch (SQLException e) {
-              LOG.error("Connection couldn't be closed.", e);
-            }
-          } else if (this.conn == null) {
-            LOG.warn("Connection error detected.");
-          }
-
-          switch (status) {
-            case UNKNOWN -> this.txnUnknown.put(transactionType);
-            case SUCCESS -> this.txnSuccess.put(transactionType);
-            case USER_ABORTED -> this.txnAbort.put(transactionType);
-            case RETRY -> this.txnRetry.put(transactionType);
-            case RETRY_DIFFERENT -> this.txtRetryDifferent.put(transactionType);
-            case ERROR -> this.txnErrors.put(transactionType);
-          }
+        switch (status) {
+          case UNKNOWN -> this.txnUnknown.put(transactionType);
+          case SUCCESS -> this.txnSuccess.put(transactionType);
+          case USER_ABORTED -> this.txnAbort.put(transactionType);
+          case RETRY -> this.txnRetry.put(transactionType);
+          case RETRY_DIFFERENT -> this.txtRetryDifferent.put(transactionType);
+          case ERROR -> this.txnErrors.put(transactionType);
         }
       }
-    } catch (SQLException ex) {
-      String msg =
-          String.format(
-              "Unexpected SQLException in '%s' when executing '%s' on [%s]",
-              this, transactionType, databaseType.name());
-
-      throw new RuntimeException(msg, ex);
     }
 
     return status;
-  }
-
-  /**
-   * Checks to see if the exception indicates that the current connection is read-only.
-   *
-   * @param ex
-   * @return
-   */
-  private boolean indicatesReadOnly(SQLException ex) {
-    String sqlState = ex.getSQLState();
-    int errorCode = ex.getErrorCode();
-
-    LOG.debug("sql state [{}] and error code [{}]", sqlState, errorCode);
-
-    if (sqlState == null) {
-      return false;
-    }
-
-    // ------------------
-    // SqlServer: "SELECT TOP 10 * FROM sys.messages"
-    // ------------------
-    if (errorCode == 3906 && sqlState.equals("S0002")) {
-      return true;
-    }
-
-    // ------------------
-    // MYSQL:
-    // https://dev.mysql.com/doc/connector-j/8.0/en/connector-j-reference-error-sqlstates.html
-    // ------------------
-    // TODO
-
-    // ------------------
-    // POSTGRES: https://www.postgresql.org/docs/current/errcodes-appendix.html
-    // ------------------
-    // TODO
-
-    return false;
   }
 
   private boolean isRetryable(SQLException ex) {
