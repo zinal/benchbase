@@ -78,7 +78,7 @@ public abstract class AbstractTestWorker<T extends BenchmarkModule> extends Abst
   public void testExecuteWork() throws Exception {
     Worker<?> w = workers.get(0);
     assertNotNull(w);
-    w.setupSession();
+    w.setupSession(conn);
     w.initialize();
     assertFalse(this.conn.isReadOnly());
     for (TransactionType txnType : this.workConf.getTransTypes()) {

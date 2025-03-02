@@ -52,7 +52,6 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
 
   private final int id;
   private final T benchmark;
-  protected Connection conn = null;
   protected final WorkloadConfiguration configuration;
   protected final TransactionTypes transactionTypes;
   protected final Map<TransactionType, Procedure> procedures = new HashMap<>();
@@ -161,10 +160,12 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
     resultStats = new ResultStats(this.transactionTypes);
 
     // Invoke setup session
-    try {
-      this.setupSession();
+    try (Connection conn = benchmark.makeConnection()) {
+      this.setupSession(conn);
     } catch (Throwable ex) {
       throw new RuntimeException("Unexpected error when setting up the session " + this, ex);
+    } finally {
+      benchmark.returnConnection();
     }
 
     // Invoke initialize callback
@@ -362,6 +363,75 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
     return type;
   }
 
+  protected final TransactionStatus doWorkStep(
+      Connection conn,
+      DatabaseType databaseType,
+      TransactionType transactionType,
+      int retryCount,
+      int maxRetryCount) {
+
+    TransactionStatus status;
+
+    try {
+
+      if (LOG.isDebugEnabled()) {
+        LOG.debug(String.format("%s %s attempting...", this, transactionType));
+      }
+
+      status = this.executeWork(conn, transactionType);
+
+      if (LOG.isDebugEnabled()) {
+        LOG.debug(
+            String.format(
+                "%s %s completed with status [%s]...", this, transactionType, status.name()));
+      }
+
+      if (LOG.isDebugEnabled()) {
+        LOG.debug(String.format("%s %s committing...", this, transactionType));
+      }
+      conn.commit();
+
+    } catch (UserAbortException ex) {
+
+      try {
+        conn.rollback();
+      } catch (SQLException ex2) {
+        LOG.warn("SQLException caught while rolling back transaction.", ex2);
+      }
+
+      ABORT_LOG.debug(String.format("%s Aborted", transactionType), ex);
+      status = TransactionStatus.USER_ABORTED;
+
+    } catch (SQLException ex) {
+
+      try {
+        conn.rollback();
+      } catch (SQLException ex2) {
+        LOG.warn("SQLException caught while attempting to rollback transaction.", ex2);
+      }
+
+      if (isRetryable(ex)) {
+        if (LOG.isDebugEnabled()) {
+          LOG.debug(
+              String.format(
+                  "Retryable SQLException occurred during [%s]... current retry attempt [%d], max retry attempts [%d], sql state [%s], error code [%d].",
+                  transactionType, retryCount, maxRetryCount, ex.getSQLState(), ex.getErrorCode()),
+              ex);
+        }
+        status = TransactionStatus.RETRY;
+      } else {
+        LOG.warn(
+            String.format(
+                "SQLException occurred during [%s] and will not be retried... sql state [%s], error code [%d].",
+                transactionType, ex.getSQLState(), ex.getErrorCode()),
+            ex);
+        status = TransactionStatus.ERROR;
+      }
+    }
+
+    return status;
+  }
+
   /**
    * Called in a loop in the thread to exercise the system under test. Each implementing worker
    * should return the TransactionType handle that was executed.
@@ -377,109 +447,42 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
     int retryCount = 0;
     int maxRetryCount = configuration.getMaxRetries();
 
-    while (retryCount < maxRetryCount && this.workloadState.getGlobalState() != State.DONE) {
+    while (retryCount < maxRetryCount && workloadState.getGlobalState() != State.DONE) {
 
-      try {
-        this.conn = this.benchmark.makeConnection();
-        this.conn.setAutoCommit(false);
-        this.conn.setTransactionIsolation(this.configuration.getIsolationMode());
+      try (Connection conn = benchmark.makeConnection()) {
+        conn.setAutoCommit(false);
+        conn.setTransactionIsolation(configuration.getIsolationMode());
+
+        status = doWorkStep(conn, databaseType, transactionType, retryCount, maxRetryCount);
+
       } catch (SQLException ex) {
         LOG.debug("{} failed to get a connection...", this, ex);
-        retryCount++;
-        try {
-          Thread.sleep(ThreadLocalRandom.current().nextLong(50L, 300L));
-        } catch (InterruptedException ix) {
-        }
-        continue;
-      }
-
-      try {
-
-        if (LOG.isDebugEnabled()) {
-          LOG.debug(String.format("%s %s attempting...", this, transactionType));
-        }
-
-        status = this.executeWork(conn, transactionType);
-
-        if (LOG.isDebugEnabled()) {
-          LOG.debug(
-              String.format(
-                  "%s %s completed with status [%s]...", this, transactionType, status.name()));
-        }
-
-        if (LOG.isDebugEnabled()) {
-          LOG.debug(String.format("%s %s committing...", this, transactionType));
-        }
-
-        conn.commit();
-
-        break;
-
-      } catch (UserAbortException ex) {
-        try {
-          conn.rollback();
-        } catch (SQLException ex2) {
-          LOG.warn("SQLException caught while rolling back transaction.", ex2);
-        }
-
-        ABORT_LOG.debug(String.format("%s Aborted", transactionType), ex);
-        status = TransactionStatus.USER_ABORTED;
-        break;
-
-      } catch (SQLException ex) {
-        try {
-          conn.rollback();
-        } catch (SQLException ex2) {
-          LOG.warn("SQLException caught while attempting to rollback transaction.", ex2);
-        }
-
-        if (isRetryable(ex)) {
-          LOG.debug(
-              String.format(
-                  "Retryable SQLException occurred during [%s]... current retry attempt [%d], max retry attempts [%d], sql state [%s], error code [%d].",
-                  transactionType, retryCount, maxRetryCount, ex.getSQLState(), ex.getErrorCode()),
-              ex);
-
-          status = TransactionStatus.RETRY;
-          retryCount++;
-
-          try {
-            Thread.sleep(ThreadLocalRandom.current().nextLong(50L, 300L));
-          } catch (InterruptedException ix) {
-          }
-
-        } else {
-          LOG.warn(
-              String.format(
-                  "SQLException occurred during [%s] and will not be retried... sql state [%s], error code [%d].",
-                  transactionType, ex.getSQLState(), ex.getErrorCode()),
-              ex);
-
-          status = TransactionStatus.ERROR;
-
-          break;
-        }
+        status = TransactionStatus.RETRY_DIFFERENT;
 
       } finally {
-        if (this.conn != null) {
-          try {
-            this.conn.close();
-            this.conn = null;
-          } catch (SQLException e) {
-            LOG.error("Connection couldn't be closed/returned.", e);
-          }
-          this.benchmark.returnConnection();
-        } else if (this.conn == null) {
-          LOG.warn("Connection error detected.");
-        }
+        benchmark.returnConnection();
+      }
 
-        switch (status) {
-          case UNKNOWN -> this.txnUnknown.put(transactionType);
-          case SUCCESS -> this.txnSuccess.put(transactionType);
-          case USER_ABORTED -> this.txnAbort.put(transactionType);
-          case RETRY -> this.txnRetry.put(transactionType);
-          case RETRY_DIFFERENT -> this.txtRetryDifferent.put(transactionType);
-          case ERROR -> this.txnErrors.put(transactionType);
+      switch (status) {
+        case UNKNOWN -> this.txnUnknown.put(transactionType);
+        case SUCCESS -> this.txnSuccess.put(transactionType);
+        case USER_ABORTED -> this.txnAbort.put(transactionType);
+        case RETRY -> this.txnRetry.put(transactionType);
+        case RETRY_DIFFERENT -> this.txtRetryDifferent.put(transactionType);
+        case ERROR -> this.txnErrors.put(transactionType);
+      }
+
+      switch (status) {
+        case RETRY, RETRY_DIFFERENT -> {
+          if (++retryCount < maxRetryCount) {
+            try {
+              Thread.sleep(ThreadLocalRandom.current().nextLong(50L, 300L));
+            } catch (InterruptedException ix) {
+            }
+          }
+        }
+        default -> {
+          return status;
         }
       }
     }
@@ -545,7 +548,7 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
    * of the file where a set of statements defined should be added in &lt;sessionsetupfile&gt;
    * &lt;/sessionsetupfile&gt;
    */
-  protected void setupSession() {
+  protected void setupSession(Connection conn) {
     try {
       String setupSessionFile = configuration.getSessionSetupFile();
       if (setupSessionFile == null || setupSessionFile.isEmpty()) {
@@ -579,15 +582,7 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
       throws UserAbortException, SQLException;
 
   /** Called at the end of the test to do any clean up that may be required. */
-  public void tearDown() {
-    if (!this.configuration.getNewConnectionPerTxn() && this.conn != null) {
-      try {
-        conn.close();
-      } catch (SQLException e) {
-        LOG.error("Connection couldn't be closed.", e);
-      }
-    }
-  }
+  public void tearDown() {}
 
   public void initializeState() {
     this.workloadState = this.configuration.getWorkloadState();
