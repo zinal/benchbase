@@ -506,6 +506,14 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
     }
 
     // ------------------
+    // Oracle
+    // ------------------
+    if (errorCode == 8177 && sqlState.equals("72000")) {
+      // ORA-08177: can't serialize access for this transaction
+      return true;
+    }
+
+    // ------------------
     // SqlServer: "SELECT TOP 10 * FROM sys.messages"
     // ------------------
     if (errorCode == 12222 && sqlState.equals("S0051")) {
