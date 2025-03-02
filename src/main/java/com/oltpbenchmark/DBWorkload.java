@@ -28,6 +28,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.sql.SQLException;
+import java.text.DecimalFormat;
 import java.util.*;
 import org.apache.commons.cli.*;
 import org.apache.commons.collections4.map.ListOrderedMap;
@@ -574,6 +575,7 @@ public class DBWorkload {
       // Bombs away!
       try {
         Results r = runWorkload(benchList, monitorInfo);
+        printTpccResults(benchList, r);
         writeOutputs(r, activeTXTypes, argsLine, xmlConfig);
         writeHistograms(r);
 
@@ -639,6 +641,39 @@ public class DBWorkload {
                     .setListDelimiterHandler(new DisabledListDelimiterHandler())
                     .setExpressionEngine(new XPathExpressionEngine()));
     return builder.getConfiguration();
+  }
+
+  private static void printTpccResults(List<BenchmarkModule> benchList, Results r) {
+    if (benchList == null
+        || benchList.isEmpty()
+        || benchList.get(0).getWorkloadConfiguration().getPhases().isEmpty()) {
+      // incomplete configuration
+      return;
+    }
+    TransactionType newOrderTrans = r.getStats().getTransactionTypes().getType("NewOrder");
+    if (newOrderTrans == null) {
+      // not a TPC-C test
+      return;
+    }
+
+    int numWarehouses = (int) benchList.get(0).getWorkloadConfiguration().getScaleFactor();
+    long numNewOrderTransactions = r.getStats().getSuccessCount(newOrderTrans.getId());
+    int time = benchList.get(0).getWorkloadConfiguration().getPhases().get(0).getTime();
+
+    double tpmc = 1.0 * numNewOrderTransactions * 60 / time;
+    double efficiency = 1.0 * tpmc * 100 / numWarehouses / 12.86;
+    DecimalFormat df = new DecimalFormat();
+    df.setMaximumFractionDigits(2);
+    String resultOut =
+        "\n================RESULTS================\n"
+            + String.format("%18s | %18d\n", "Time, s", time)
+            + String.format("%18s | %18d\n", "NewOrders", numNewOrderTransactions)
+            + String.format("%18s | %18.2f\n", "TPM-C", tpmc)
+            + String.format("%18s | %17.2f%%\n", "Efficiency", efficiency)
+            + String.format("reqs/s: %s\n", r);
+
+    LOG.info(SINGLE_LINE);
+    LOG.info(resultOut);
   }
 
   private static void writeHistograms(Results r) {

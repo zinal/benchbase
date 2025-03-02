@@ -39,6 +39,18 @@ public class ResultStats {
     }
   }
 
+  public TransactionTypes getTransactionTypes() {
+    return transactionTypes;
+  }
+
+  public int getTransactionTypeCount() {
+    return transactionTypeCount;
+  }
+
+  public TransactionStats[] getTransactionStats() {
+    return transactionStats;
+  }
+
   public void addLatency(
       int transType, long startNanosecond, long endNanosecond, boolean isSuccess) {
     assert (transType < transactionTypeCount);
